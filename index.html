@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08271d">
+  <meta name="description" content="Vine Connect by Vine Solutions - secure company chat.">
+  <title>Vine Connect | Vine Solutions</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="supabase-config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <section class="auth-screen" id="auth-screen">
+    <div class="auth-theme-row">
+      <button class="auth-theme-button theme-toggle" type="button" aria-label="Switch theme">&#9789;</button>
+    </div>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="auth-logo"><img src="vine-solutions-logo.png" alt="Vine Solutions"></span>
+        <div><h1>Vine Connect</h1><p>Private company chat by Vine Solutions</p></div>
+      </div>
+
+      <div class="config-alert" id="config-alert" hidden>
+        <strong>Supabase setup required</strong>
+        <span>Add your Project URL and publishable key to <code>supabase-config.js</code>, then refresh.</span>
+      </div>
+
+      <form class="auth-form" id="login-form">
+        <div class="auth-heading"><h2>Welcome back</h2><p>Sign in with your company account.</p></div>
+        <label>Email address<input id="login-email" type="email" autocomplete="username" placeholder="name@vinesolutions.com" required></label>
+        <label>Password<input id="login-password" type="password" autocomplete="current-password" placeholder="Your password" required></label>
+        <p class="form-error" id="login-error" role="alert" hidden></p>
+        <button class="primary-button auth-submit" id="login-submit" type="submit">Sign in</button>
+      </form>
+
+      <form class="auth-form" id="password-form" hidden>
+        <div class="auth-heading"><h2>Create a private password</h2><p>Your temporary password worked. Choose a new password before entering Vine Connect.</p></div>
+        <label>New password<input id="new-password" type="password" autocomplete="new-password" minlength="12" required></label>
+        <label>Confirm new password<input id="confirm-password" type="password" autocomplete="new-password" minlength="12" required></label>
+        <p class="password-rule">Use at least 12 characters.</p>
+        <p class="form-error" id="password-error" role="alert" hidden></p>
+        <button class="primary-button auth-submit" id="password-submit" type="submit">Save password and continue</button>
+      </form>
+
+      <p class="auth-foot">Access is limited to approved Vine Solutions members.</p>
+    </div>
+  </section>
+
+  <main class="chat-shell" id="app" hidden>
+    <div class="topbar">
+      <div class="topbar-spacer"></div>
+      <button class="history-button" type="button" aria-label="Recent history"><i class="glyph">&#9714;</i></button>
+      <button class="global-search" id="open-search" type="button" aria-label="Search Vine Connect">
+        <i class="glyph">&#8981;</i><span>Search Vine Connect</span><kbd>Ctrl K</kbd>
+      </button>
+      <button class="topbar-icon theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"><i class="glyph">&#9789;</i></button>
+    </div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="workspace-head">
+        <span class="workspace-logo" aria-hidden="true"><img src="vine-solutions-logo.png" alt=""></span>
+        <button class="workspace-title" type="button"><span class="workspace-title-copy"><strong>Vine Connect</strong><small>Vine Solutions</small></span><i class="glyph small">&#8963;</i></button>
+        <button class="compose-button" id="focus-composer" type="button" aria-label="Compose a new message"><i class="glyph glyph-button">&#9998;</i></button>
+      </div>
+      <nav class="sidebar-nav" aria-label="Workspace navigation">
+        <button class="side-link" type="button"><i class="glyph">&#9676;</i><span>Threads</span></button>
+        <button class="side-link" type="button"><i class="glyph">@</i><span>Mentions</span></button>
+        <button class="side-link" type="button"><i class="glyph">&#9734;</i><span>Starred</span></button>
+        <p class="local-mode-note"><strong>Secure workspace</strong><br>Messages and private files are stored in your Supabase project.</p>
+        <div class="channel-section">
+          <div class="section-heading">
+            <span>Channels</span>
+            <button id="open-channel-modal" type="button" aria-label="Create a channel" title="Admins only" hidden><i class="glyph glyph-button">+</i></button>
+          </div>
+          <div id="channel-list"></div>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="profile-chip" id="open-profile" type="button">
+          <span class="avatar small avatar-blue" id="profile-avatar">VC</span>
+          <span class="profile-copy"><strong id="profile-name">Vine member</strong><small><i></i><span id="profile-role">Employee</span></small></span>
+        </button>
+        <button class="huddle-button" id="sign-out-quick" type="button" aria-label="Sign out" title="Sign out"><i class="glyph">&#8618;</i></button>
+      </div>
+    </aside>
+    <button class="sidebar-scrim" id="sidebar-scrim" type="button" aria-label="Close sidebar" hidden></button>
+
+    <section class="conversation">
+      <header class="channel-header">
+        <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open sidebar"><i class="glyph">&#9776;</i></button>
+        <div class="channel-identity">
+          <div class="channel-title-line"><i class="glyph">#</i><h1 id="channel-name">general</h1></div>
+          <p id="channel-description"></p>
+        </div>
+        <div class="header-actions">
+          <button class="member-stack" id="open-members" type="button" aria-label="View members">
+            <span class="mini-avatar avatar-coral" id="member-mini-1">AI</span><span class="mini-avatar avatar-blue" id="member-mini-2">KE</span><span class="mini-avatar avatar-mint" id="member-mini-3">AD</span><strong id="member-count">6</strong>
+          </button>
+          <button type="button" aria-label="More channel options"><i class="glyph">...</i></button>
+        </div>
+      </header>
+
+      <div class="message-pane" id="message-pane"><div class="message-loading"><i class="glyph spin">&#9696;</i> Loading workspace...</div></div>
+
+      <div class="composer-wrap" id="composer-wrap">
+        <div class="drop-overlay" id="drop-overlay" hidden><i class="glyph">&#8981;</i> Drop files to attach</div>
+        <div class="composer">
+          <div class="pending-files" id="pending-files" hidden></div>
+          <textarea id="message-input" rows="2" aria-label="Write a message" placeholder="Message #general"></textarea>
+          <div class="composer-tools">
+            <div class="format-tools">
+              <button id="attach-files" type="button" aria-label="Attach files"><i class="glyph glyph-button">+</i></button>
+              <span class="tool-divider"></span>
+              <button type="button" aria-label="Bold"><b>B</b></button>
+              <button type="button" aria-label="Italic"><i>I</i></button>
+              <button type="button" aria-label="Mention someone"><i class="glyph">@</i></button>
+              <button type="button" aria-label="Add emoji"><i class="glyph">&#9786;</i></button>
+            </div>
+            <button class="send-button" id="send-message" type="button" aria-label="Send message" disabled><i class="glyph">&#10148;</i></button>
+          </div>
+          <input class="visually-hidden" id="file-input" type="file" multiple accept="image/*,video/mp4,video/webm,video/quicktime,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip">
+        </div>
+        <p class="composer-hint"><strong>Enter</strong> to send &middot; <strong>Shift + Enter</strong> for a new line &middot; 30 MB per file</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-layer" id="channel-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="create-channel-title">
+      <button class="modal-close" data-close="channel-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#10022;</i></div>
+      <h2 id="create-channel-title">Create a channel</h2>
+      <p>Admin access is required. Give a project, team, or client its own focused place to talk.</p>
+      <form id="channel-form">
+        <label>Channel name<input id="new-channel-name" autocomplete="off" placeholder="e.g. client-orbit" maxlength="48" required></label>
+        <label>Description <span>Optional</span><input id="new-channel-description" placeholder="What is this channel for?" maxlength="160"></label>
+        <label>Place it under <span>Optional</span>
+          <select id="new-channel-parent"><option value="">No parent - top-level channel</option></select>
+        </label>
+        <div class="modal-tip"><i class="glyph folder-glyph">&#9635;</i><span>Choose a client channel above to create a sub-channel beneath it.</span></div>
+        <p class="form-error" id="channel-error" role="alert" hidden></p>
+        <button class="primary-button" id="channel-submit" type="submit">Create channel</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="profile-modal" role="presentation" hidden>
+    <div class="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+      <button class="modal-close" data-close="profile-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <span class="avatar profile-avatar avatar-blue" id="profile-modal-avatar">VC</span>
+      <h2 id="profile-title">Your Vine profile</h2>
+      <p><span class="role-pill" id="profile-modal-role">Employee</span> <span id="profile-email"></span></p>
+      <form id="profile-form">
+        <label>Display name<input id="display-name" maxlength="60" required></label>
+        <button class="primary-button" type="submit">Save profile</button>
+      </form>
+      <button class="secondary-button" id="sign-out" type="button">Sign out</button>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="members-modal" role="presentation" hidden>
+    <div class="modal members-modal" role="dialog" aria-modal="true" aria-labelledby="members-title">
+      <button class="modal-close" data-close="members-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">@</i></div>
+      <h2 id="members-title">Vine Connect members</h2>
+      <p>Only administrators can create channels and sub-channels.</p>
+      <div class="members-list" id="members-list"></div>
+    </div>
+  </div>
+
+  <div class="search-layer" id="search-modal" role="presentation" hidden>
+    <div class="search-dialog" role="dialog" aria-modal="true" aria-label="Search channels">
+      <div class="search-field"><i class="glyph">&#8981;</i><input id="search-input" placeholder="Search channels..."><button data-close="search-modal" type="button"><kbd>Esc</kbd></button></div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
