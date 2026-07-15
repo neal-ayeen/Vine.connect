@@ -342,6 +342,7 @@ body[data-theme="dark"] .toast { color-scheme: light; }
 .secondary-button { width: 100%; min-height: 40px; margin-top: 10px; border: 1px solid #cac6cb; border-radius: 7px; color: #544f55; background: #fff; cursor: pointer; font-size: 12px; font-weight: 690; }
 .secondary-button:hover { background: #f6f4f6; }
 .members-modal { max-width: 500px; }
+.add-member-button { width: 100%; margin: -5px 0 13px; }
 .members-list { max-height: min(480px, 56vh); overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
 .member-row { min-height: 55px; display: grid; grid-template-columns: 35px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; }
 .member-row:hover { background: #f6f8f6; }
@@ -352,6 +353,15 @@ body[data-theme="dark"] .toast { color-scheme: light; }
 .empty-message-note { margin: 0 28px 22px; color: var(--muted); font-size: 12px; }
 .attachment-holder { min-height: 45px; margin-top: 7px; }
 .attachment-holder > .attachment-preview-fallback { animation: spin .8s linear infinite; }
+.member-created-modal { max-width: 440px; text-align: center; }
+.success-check { width: 52px; height: 52px; display: grid; place-items: center; margin: 0 auto 2px; border-radius: 50%; color: #fff; background: #287a50; font-size: 25px; font-weight: 800; box-shadow: 0 9px 26px rgba(40,122,80,.22); }
+.credential-card { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin: 18px 0 15px; padding: 15px; border: 1px solid #dce7df; border-radius: 10px; background: #f6faf7; text-align: left; }
+.credential-card > span { margin-top: 5px; color: #6e7e74; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.credential-card > strong { overflow-wrap: anywhere; color: #173c2b; font-size: 13px; }
+.credential-password-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; }
+.credential-password-row input { min-width: 0; height: 40px; border: 1px solid #b8c8be; border-radius: 7px; padding: 0 10px; color: #173c2b; background: #fff; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+.credential-password-row button { min-width: 65px; border: 0; border-radius: 7px; color: #fff; background: #287a50; cursor: pointer; font-size: 11px; font-weight: 750; }
+.credential-password-row button:hover { background: #17613f; }
 
 body[data-theme="dark"] .auth-screen { background: radial-gradient(circle at 50% 5%, #153526 0, #0c1711 48%, #08100c 100%); }
 body[data-theme="dark"] .auth-card { border-color: #294437; background: rgba(16,26,21,.97); box-shadow: 0 26px 80px rgba(0,0,0,.4); }
@@ -369,6 +379,9 @@ body[data-theme="dark"] .secondary-button:hover,
 body[data-theme="dark"] .member-row:hover { background: #1a2b22; }
 body[data-theme="dark"] .role-pill { color: #b8d9c5; background: #1d3d2d; }
 body[data-theme="dark"] .role-pill.admin { color: #f2d88f; background: #443612; }
+body[data-theme="dark"] .credential-card { border-color: #345043; background: #14251c; }
+body[data-theme="dark"] .credential-card > strong { color: #e2efe7; }
+body[data-theme="dark"] .credential-password-row input { border-color: #3d5b4b; color: #eef7f1; background: #0f1c15; }
 
 @media (max-width: 520px) {
   .auth-screen { align-items: start; padding: 60px 13px 20px; }

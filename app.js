@@ -77,7 +77,11 @@ function bindEvents() {
   $("#focus-composer").addEventListener("click", () => $("#message-input").focus());
   $("#open-channel-modal").addEventListener("click", openChannelModal);
   $("#open-profile").addEventListener("click", openProfileModal);
-  $("#open-members").addEventListener("click", () => openModal("members-modal"));
+  $("#open-members").addEventListener("click", openMembersModal);
+  $("#open-add-member").addEventListener("click", openAddMemberModal);
+  $("#add-member-form").addEventListener("submit", createMember);
+  $("#copy-member-password").addEventListener("click", copyTemporaryPassword);
+  $("#finish-member-created").addEventListener("click", () => closeModal("member-created-modal"));
   $("#open-search").addEventListener("click", openSearch);
   $("#search-input").addEventListener("input", renderSearchResults);
   $("#mobile-menu").addEventListener("click", openSidebar);
@@ -243,6 +247,7 @@ function applyProfile() {
   $("#profile-email").textContent = currentProfile.email;
   $("#display-name").value = name;
   $("#open-channel-modal").hidden = currentProfile.role !== "admin";
+  $("#open-add-member").hidden = currentProfile.role !== "admin";
 }
 
 function renderChannels() {
@@ -677,6 +682,79 @@ function renderMembers() {
     row.append(avatar, copy, role);
     container.append(row);
   });
+}
+
+function openMembersModal() {
+  renderMembers();
+  $("#open-add-member").hidden = currentProfile?.role !== "admin";
+  openModal("members-modal");
+}
+
+function openAddMemberModal() {
+  if (currentProfile?.role !== "admin") {
+    return showToast("Only administrators can add members.", "error");
+  }
+  $("#add-member-form").reset();
+  hideError("member-error");
+  closeModal("members-modal");
+  openModal("add-member-modal");
+  $("#member-display-name").focus();
+}
+
+async function createMember(event) {
+  event.preventDefault();
+  if (currentProfile?.role !== "admin" || state.busy) {
+    return showFormError("member-error", "Only administrators can add members.");
+  }
+
+  const displayName = $("#member-display-name").value.trim();
+  const email = $("#member-email").value.trim().toLowerCase();
+  const role = $("#member-role").value;
+  const button = $("#member-submit");
+  hideError("member-error");
+  setButtonBusy(button, true, "Creating member...");
+
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("add-member", {
+      body: { displayName, email, role },
+    });
+
+    if (error) {
+      let message = error.message || "The member could not be created.";
+      try {
+        const details = await error.context?.json();
+        message = details?.error || details?.message || message;
+      } catch (_ignored) {
+        // Use the Supabase error message when the response body is unavailable.
+      }
+      throw new Error(message);
+    }
+    if (!data?.temporaryPassword || !data?.member?.email) {
+      throw new Error(data?.error || "The member was not created. Check the Edge Function logs.");
+    }
+
+    $("#created-member-email").textContent = data.member.email;
+    $("#created-member-password").value = data.temporaryPassword;
+    closeModal("add-member-modal");
+    openModal("member-created-modal");
+    await loadWorkspace(false);
+  } catch (error) {
+    showFormError("member-error", error.message || "The member could not be created.");
+  } finally {
+    setButtonBusy(button, false, "Create member");
+  }
+}
+
+async function copyTemporaryPassword() {
+  const input = $("#created-member-password");
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch (_error) {
+    input.focus();
+    input.select();
+    document.execCommand("copy");
+  }
+  showToast("Temporary password copied.", "success");
 }
 
 function openSearch() {

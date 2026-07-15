@@ -165,8 +165,46 @@
       <button class="modal-close" data-close="members-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
       <div class="modal-icon"><i class="glyph">@</i></div>
       <h2 id="members-title">Vine Connect members</h2>
-      <p>Only administrators can create channels and sub-channels.</p>
+      <p>Administrators can add members and manage workspace access.</p>
+      <button class="primary-button add-member-button" id="open-add-member" type="button" hidden>+ Add member</button>
       <div class="members-list" id="members-list"></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="add-member-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title">
+      <button class="modal-close" data-close="add-member-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">+</i></div>
+      <h2 id="add-member-title">Add a Vine Connect member</h2>
+      <p>The new member receives a temporary password and must replace it after the first login.</p>
+      <form id="add-member-form">
+        <label>Display name<input id="member-display-name" autocomplete="name" placeholder="e.g. Maria Santos" maxlength="60" required></label>
+        <label>Email address<input id="member-email" type="email" autocomplete="email" placeholder="name@vinesolutions.com" maxlength="254" required></label>
+        <label>Workspace role
+          <select id="member-role" required>
+            <option value="employee">Employee</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <div class="modal-tip"><i class="glyph">!</i><span>Admins can add other members and create channels. Give Admin access only to trusted managers.</span></div>
+        <p class="form-error" id="member-error" role="alert" hidden></p>
+        <button class="primary-button" id="member-submit" type="submit">Create member</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="member-created-modal" role="presentation" hidden>
+    <div class="modal member-created-modal" role="dialog" aria-modal="true" aria-labelledby="member-created-title">
+      <div class="success-check" aria-hidden="true">&#10003;</div>
+      <h2 id="member-created-title">Member created</h2>
+      <p>Send these temporary login details privately. The password is shown only in this window.</p>
+      <div class="credential-card">
+        <span>Email</span>
+        <strong id="created-member-email"></strong>
+        <span>Temporary password</span>
+        <div class="credential-password-row"><input id="created-member-password" readonly><button id="copy-member-password" type="button">Copy</button></div>
+      </div>
+      <button class="primary-button" id="finish-member-created" type="button">Done</button>
     </div>
   </div>
 
