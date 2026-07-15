@@ -3,15 +3,20 @@
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 const MAX_VIDEO_SECONDS = 120;
 const STORAGE_BUCKET = "chat-files";
+const EMOJIS = ["\uD83D\uDE0A", "\uD83D\uDE02", "\uD83D\uDC4D", "\uD83D\uDE4C", "\uD83C\uDF89", "\u2764\uFE0F", "\uD83D\uDD25", "\u2705", "\uD83D\uDCCC", "\uD83D\uDC40", "\uD83E\uDD1D", "\uD83D\uDE80", "\uD83C\uDF3F", "\uD83D\uDCA1", "\uD83D\uDE4F", "\uD83D\uDCAC"];
 
 const state = {
   channels: [],
   messages: [],
   directMessages: [],
+  threadReplies: [],
+  pins: [],
   members: [],
   clients: [],
   selectedChannelId: null,
   selectedDirectUserId: null,
+  activeThread: null,
+  composerTarget: "message-input",
   expanded: new Set(),
   pendingFiles: [],
   pendingPreviews: new Map(),
@@ -20,6 +25,7 @@ const state = {
   reloadTimer: null,
   lastViewed: {},
   viewStateInitialized: false,
+  notificationsMuted: false,
   busy: false,
 };
 
@@ -38,6 +44,7 @@ document.addEventListener("DOMContentLoaded", init);
 async function init() {
   bindEvents();
   applySavedTheme();
+  applyNotificationPreference();
 
   const config = window.VINE_SUPABASE_CONFIG || {};
   const configured = /^https:\/\/.+\.supabase\.co$/i.test(config.url || "")
@@ -72,6 +79,7 @@ function bindEvents() {
   $("#channel-form").addEventListener("submit", createChannel);
   $("#profile-form").addEventListener("submit", updateProfile);
   $("#message-input").addEventListener("input", updateSendState);
+  $("#message-input").addEventListener("focus", () => { state.composerTarget = "message-input"; });
   $("#message-input").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -79,6 +87,10 @@ function bindEvents() {
     }
   });
   $("#send-message").addEventListener("click", sendMessage);
+  $("#format-bold").addEventListener("click", () => applyTextFormat("message-input", "**", "bold text"));
+  $("#format-italic").addEventListener("click", () => applyTextFormat("message-input", "*", "italic text"));
+  $("#format-mention").addEventListener("click", () => openMentionPicker("message-input"));
+  $("#format-emoji").addEventListener("click", () => openEmojiPicker("message-input"));
   $("#attach-files").addEventListener("click", () => $("#file-input").click());
   $("#file-input").addEventListener("change", (event) => queueFiles(event.target.files));
   $("#focus-composer").addEventListener("click", () => $("#message-input").focus());
@@ -90,14 +102,36 @@ function bindEvents() {
   $("#copy-member-password").addEventListener("click", copyTemporaryPassword);
   $("#finish-member-created").addEventListener("click", () => closeModal("member-created-modal"));
   $("#open-search").addEventListener("click", openSearch);
+  $("#open-recent").addEventListener("click", openThreadsOverview);
+  $("#workspace-menu").addEventListener("click", openMembersModal);
+  $("#conversation-more").addEventListener("click", openConversationOptions);
   $("#open-crm").addEventListener("click", openCrm);
   $("#open-client-form").addEventListener("click", openClientForm);
   $("#client-form").addEventListener("submit", createClient);
+  $("#employee-form").addEventListener("submit", updateEmployee);
+  $("#delete-employee").addEventListener("click", deleteEmployee);
+  $("#open-threads").addEventListener("click", openThreadsOverview);
+  $("#open-mentions").addEventListener("click", openMentionsOverview);
+  $("#open-pins").addEventListener("click", openPinnedMessages);
+  $("#open-pins-sidebar").addEventListener("click", openPinnedMessages);
+  $("#thread-form").addEventListener("submit", sendThreadReply);
+  $("#thread-input").addEventListener("focus", () => { state.composerTarget = "thread-input"; });
+  $("#thread-input").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      $("#thread-form").requestSubmit();
+    }
+  });
+  $("#thread-bold").addEventListener("click", () => applyTextFormat("thread-input", "**", "bold text"));
+  $("#thread-italic").addEventListener("click", () => applyTextFormat("thread-input", "*", "italic text"));
+  $("#thread-mention").addEventListener("click", () => openMentionPicker("thread-input"));
+  $("#thread-emoji").addEventListener("click", () => openEmojiPicker("thread-input"));
   $("#search-input").addEventListener("input", renderSearchResults);
   $("#mobile-menu").addEventListener("click", openSidebar);
   $("#sidebar-scrim").addEventListener("click", closeSidebar);
   $("#sign-out").addEventListener("click", signOut);
   $("#sign-out-quick").addEventListener("click", signOut);
+  $("#toggle-notifications").addEventListener("click", toggleNotifications);
   $$(".theme-toggle").forEach((button) => button.addEventListener("click", toggleTheme));
   $$('[data-close]').forEach((button) => button.addEventListener("click", () => closeModal(button.dataset.close)));
   $$(".modal-layer, .search-layer").forEach((layer) => layer.addEventListener("click", (event) => {
@@ -152,9 +186,12 @@ async function syncSession(session) {
     state.channels = [];
     state.messages = [];
     state.directMessages = [];
+    state.threadReplies = [];
+    state.pins = [];
     state.members = [];
     state.clients = [];
     state.selectedDirectUserId = null;
+    state.activeThread = null;
     state.lastViewed = {};
     state.viewStateInitialized = false;
     $("#app").hidden = true;
@@ -175,7 +212,7 @@ async function syncSession(session) {
 
   const { data: profile, error } = await supabaseClient
     .from("profiles")
-    .select("id,email,display_name,role")
+    .select("id,email,display_name,role,job_title")
     .eq("id", session.user.id)
     .single();
 
@@ -224,15 +261,17 @@ async function loadWorkspace(scrollToBottom = false) {
   const clientsRequest = currentProfile?.role === "admin"
     ? supabaseClient.from("crm_clients").select("id,name,company,email,phone,status,notes,created_at,updated_at").order("updated_at", { ascending: false })
     : Promise.resolve({ data: [], error: null });
-  const [channelsResult, messagesResult, directResult, membersResult, clientsResult] = await Promise.all([
+  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult] = await Promise.all([
     supabaseClient.from("channels").select("id,name,description,parent_id,created_at").order("created_at", { ascending: true }),
     supabaseClient.from("messages").select("id,channel_id,author_id,body,attachments,created_at,edited_at,author:profiles!messages_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(1000),
     supabaseClient.from("direct_messages").select("id,sender_id,recipient_id,body,attachments,created_at,edited_at").order("created_at", { ascending: true }).limit(1000),
-    supabaseClient.from("profiles").select("id,email,display_name,role").order("display_name", { ascending: true }),
+    supabaseClient.from("thread_replies").select("id,channel_message_id,direct_message_id,author_id,body,created_at,edited_at,author:profiles!thread_replies_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(2000),
+    supabaseClient.from("message_pins").select("id,message_id,channel_id,pinned_by,created_at").order("created_at", { ascending: false }),
+    supabaseClient.from("profiles").select("id,email,display_name,role,job_title").order("display_name", { ascending: true }),
     clientsRequest,
   ]);
 
-  const firstError = channelsResult.error || messagesResult.error || directResult.error || membersResult.error || clientsResult.error;
+  const firstError = channelsResult.error || messagesResult.error || directResult.error || threadResult.error || pinsResult.error || membersResult.error || clientsResult.error;
   if (firstError) {
     messagePane.innerHTML = `<div class="empty-channel"><span class="empty-icon">!</span><h2>Workspace could not load</h2><p>${escapeHtml(firstError.message)}</p></div>`;
     showToast(firstError.message, "error");
@@ -242,6 +281,8 @@ async function loadWorkspace(scrollToBottom = false) {
   state.channels = channelsResult.data || [];
   state.messages = messagesResult.data || [];
   state.directMessages = directResult.data || [];
+  state.threadReplies = threadResult.data || [];
+  state.pins = pinsResult.data || [];
   state.members = membersResult.data || [];
   state.clients = clientsResult.data || [];
 
@@ -264,6 +305,8 @@ async function loadWorkspace(scrollToBottom = false) {
   renderMembers();
   renderCrm();
   renderConversation(scrollToBottom);
+  renderActivityBadges();
+  if (state.activeThread && !$("#thread-modal").hidden) renderThreadModal();
 }
 
 function applyProfile() {
@@ -321,6 +364,7 @@ function renderChannels() {
     }
 
     row.append(channelButton(channel, unread));
+    if (currentProfile?.role === "admin") row.append(channelDeleteButton(channel));
     group.append(row);
 
     if (children.length && state.expanded.has(channel.id)) {
@@ -335,7 +379,11 @@ function renderChannels() {
         button.append(name);
         if (childUnread) button.append(unreadDot());
         button.addEventListener("click", () => selectChannel(child.id));
-        group.append(button);
+        const subRow = document.createElement("div");
+        subRow.className = "subchannel-row";
+        subRow.append(button);
+        if (currentProfile?.role === "admin") subRow.append(channelDeleteButton(child));
+        group.append(subRow);
       });
     }
     container.append(group);
@@ -353,6 +401,64 @@ function channelButton(channel, unread = false) {
   if (unread) button.append(unreadDot());
   button.addEventListener("click", () => selectChannel(channel.id));
   return button;
+}
+
+function channelDeleteButton(channel) {
+  const button = document.createElement("button");
+  button.className = "channel-delete-button";
+  button.type = "button";
+  button.title = `Delete #${channel.name}`;
+  button.setAttribute("aria-label", `Delete channel ${channel.name}`);
+  button.textContent = "\u00D7";
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    deleteChannel(channel);
+  });
+  return button;
+}
+
+async function deleteChannel(channel) {
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  const childCount = state.channels.filter((item) => item.parent_id === channel.id).length;
+  const warning = childCount
+    ? `Delete #${channel.name}, its ${childCount} sub-channel${childCount === 1 ? "" : "s"}, and all of their messages?`
+    : `Delete #${channel.name} and all of its messages?`;
+  if (!window.confirm(`${warning}\n\nThis cannot be undone.`)) return;
+  const channelIds = getChannelDescendantIds(channel.id);
+  const attachmentPaths = state.messages
+    .filter((message) => channelIds.has(message.channel_id))
+    .flatMap((message) => Array.isArray(message.attachments) ? message.attachments : [])
+    .map((attachment) => attachment.path)
+    .filter(Boolean);
+  state.busy = true;
+  const { error } = await supabaseClient.rpc("delete_vine_channel", { target_channel_id: channel.id });
+  let storageWarning = "";
+  if (!error && attachmentPaths.length) {
+    const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).remove(attachmentPaths);
+    if (storageError) storageWarning = " Some old attachment files could not be cleared from storage.";
+  }
+  state.busy = false;
+  if (error) return showToast(error.message, "error");
+  if (state.selectedChannelId === channel.id || state.channels.find((item) => item.id === state.selectedChannelId)?.parent_id === channel.id) {
+    state.selectedChannelId = null;
+  }
+  await loadWorkspace(false);
+  showToast(`#${channel.name} deleted.${storageWarning}`, storageWarning ? "error" : "success");
+}
+
+function getChannelDescendantIds(channelId) {
+  const ids = new Set([channelId]);
+  let added = true;
+  while (added) {
+    added = false;
+    state.channels.forEach((channel) => {
+      if (channel.parent_id && ids.has(channel.parent_id) && !ids.has(channel.id)) {
+        ids.add(channel.id);
+        added = true;
+      }
+    });
+  }
+  return ids;
 }
 
 function selectChannel(id) {
@@ -419,6 +525,7 @@ function renderConversation(scrollToBottom = false) {
     $("#conversation-symbol").textContent = "@";
     $("#channel-name").textContent = displayName;
     $("#channel-description").textContent = `${member.email} - private conversation`;
+    $("#open-pins").hidden = true;
     $("#message-input").placeholder = `Message ${displayName}`;
     $("#message-input").disabled = false;
     markConversationRead("direct", member.id);
@@ -447,6 +554,7 @@ function renderConversation(scrollToBottom = false) {
     $("#conversation-symbol").textContent = "#";
     $("#channel-name").textContent = "Vine Connect";
     $("#channel-description").textContent = "Your workspace has no channels yet.";
+    $("#open-pins").hidden = true;
     $("#message-input").placeholder = "No channel selected";
     $("#message-input").disabled = true;
     $("#message-pane").innerHTML = '<div class="empty-channel"><span class="empty-icon">#</span><h2>No channels yet</h2><p>An administrator can create the first channel.</p></div>';
@@ -458,6 +566,8 @@ function renderConversation(scrollToBottom = false) {
   $("#conversation-symbol").textContent = "#";
   $("#channel-name").textContent = channel.name;
   $("#channel-description").textContent = channel.description || "Vine Solutions company conversation";
+  $("#open-pins").hidden = false;
+  $("#pin-count").textContent = state.pins.filter((pin) => pin.channel_id === channel.id).length;
   $("#message-input").placeholder = `Message #${channel.name}`;
   const messages = state.messages.filter((message) => message.channel_id === channel.id);
   const pane = $("#message-pane");
@@ -504,6 +614,7 @@ function renderMessage(message) {
   const name = author.display_name || author.email?.split("@")[0] || "Vine member";
   const row = document.createElement("article");
   row.className = "message-row";
+  row.dataset.messageId = message.id;
 
   const avatar = document.createElement("span");
   avatar.className = `avatar ${avatarClass(authorId)}`;
@@ -530,8 +641,16 @@ function renderMessage(message) {
 
   if (message.body) {
     const body = document.createElement("p");
-    body.textContent = message.body;
+    appendFormattedText(body, message.body);
     content.append(body);
+  }
+
+  const pin = message.channel_id ? state.pins.find((item) => item.message_id === message.id) : null;
+  if (pin) {
+    const pinned = document.createElement("span");
+    pinned.className = "pinned-label";
+    pinned.textContent = "\u2605 Pinned to this channel";
+    content.append(pinned);
   }
 
   (Array.isArray(message.attachments) ? message.attachments : []).forEach((attachment) => {
@@ -542,11 +661,37 @@ function renderMessage(message) {
     hydrateAttachment(holder, attachment);
   });
 
+  const replyCount = getThreadReplies(message).length;
+  if (replyCount) {
+    const summary = document.createElement("button");
+    summary.type = "button";
+    summary.className = "thread-summary";
+    summary.textContent = `${replyCount} ${replyCount === 1 ? "reply" : "replies"} - View thread`;
+    summary.addEventListener("click", () => openThread(message));
+    content.append(summary);
+  }
+
   row.append(content);
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
+  const threadButton = document.createElement("button");
+  threadButton.type = "button";
+  threadButton.title = "Reply in thread";
+  threadButton.setAttribute("aria-label", "Reply in thread");
+  threadButton.textContent = "\u21B3";
+  threadButton.addEventListener("click", () => openThread(message));
+  actions.append(threadButton);
+  if (message.channel_id) {
+    const pinButton = document.createElement("button");
+    pinButton.type = "button";
+    pinButton.title = pin ? "Unpin message" : "Pin message";
+    pinButton.setAttribute("aria-label", pin ? "Unpin message" : "Pin message");
+    pinButton.textContent = pin ? "\u2605" : "\u2606";
+    pinButton.addEventListener("click", () => togglePin(message));
+    actions.append(pinButton);
+  }
   if (authorId === currentSession?.user.id) {
     row.classList.add("own-message");
-    const actions = document.createElement("div");
-    actions.className = "message-actions";
     const editButton = document.createElement("button");
     editButton.type = "button";
     editButton.title = "Edit message";
@@ -560,9 +705,376 @@ function renderMessage(message) {
     deleteButton.textContent = "\u00D7";
     deleteButton.addEventListener("click", () => deleteMessage(message));
     actions.append(editButton, deleteButton);
-    row.append(actions);
   }
+  row.append(actions);
   return row;
+}
+
+function appendFormattedText(container, text) {
+  const pattern = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|@[a-zA-Z0-9._-]+)/g;
+  let cursor = 0;
+  for (const match of String(text || "").matchAll(pattern)) {
+    if (match.index > cursor) container.append(document.createTextNode(text.slice(cursor, match.index)));
+    const token = match[0];
+    if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      container.append(strong);
+    } else if (token.startsWith("*") || token.startsWith("_")) {
+      const italic = document.createElement("em");
+      italic.textContent = token.slice(1, -1);
+      container.append(italic);
+    } else {
+      const mention = document.createElement("span");
+      mention.className = "mention-token";
+      mention.textContent = token;
+      container.append(mention);
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) container.append(document.createTextNode(text.slice(cursor)));
+}
+
+function applyTextFormat(inputId, marker, placeholder) {
+  const input = document.getElementById(inputId);
+  if (!input || input.disabled) return;
+  state.composerTarget = inputId;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const selected = input.value.slice(start, end) || placeholder;
+  const replacement = `${marker}${selected}${marker}`;
+  input.setRangeText(replacement, start, end, "end");
+  input.focus();
+  input.setSelectionRange(start + marker.length, start + marker.length + selected.length);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function insertAtCursor(inputId, value) {
+  const input = document.getElementById(inputId);
+  if (!input || input.disabled) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const prefix = start > 0 && !/\s/.test(input.value[start - 1]) ? " " : "";
+  input.setRangeText(`${prefix}${value} `, start, end, "end");
+  input.focus();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function memberHandle(member) {
+  return String(member?.email || "member").split("@")[0].replace(/[^a-zA-Z0-9._-]/g, "").toLowerCase();
+}
+
+function openMentionPicker(inputId) {
+  state.composerTarget = inputId;
+  const container = $("#mention-picker-list");
+  container.replaceChildren();
+  state.members.forEach((member) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    const avatar = document.createElement("span");
+    avatar.className = `avatar small ${avatarClass(member.id)}`;
+    avatar.textContent = getInitials(member.display_name || member.email);
+    const copy = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = member.display_name || member.email.split("@")[0];
+    const handle = document.createElement("small");
+    handle.textContent = `@${memberHandle(member)}`;
+    copy.append(name, handle);
+    button.append(avatar, copy);
+    button.addEventListener("click", () => {
+      insertAtCursor(state.composerTarget, `@${memberHandle(member)}`);
+      closeModal("mention-modal");
+    });
+    container.append(button);
+  });
+  openModal("mention-modal");
+}
+
+function openEmojiPicker(inputId) {
+  state.composerTarget = inputId;
+  const container = $("#emoji-picker-list");
+  container.replaceChildren();
+  EMOJIS.forEach((emoji) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", `Insert ${emoji}`);
+    button.textContent = emoji;
+    button.addEventListener("click", () => {
+      insertAtCursor(state.composerTarget, emoji);
+      closeModal("emoji-modal");
+    });
+    container.append(button);
+  });
+  openModal("emoji-modal");
+}
+
+function getThreadReplies(message) {
+  const field = message.sender_id ? "direct_message_id" : "channel_message_id";
+  return state.threadReplies.filter((reply) => reply[field] === message.id);
+}
+
+function getActiveThreadMessage() {
+  if (!state.activeThread) return null;
+  const source = state.activeThread.type === "direct" ? state.directMessages : state.messages;
+  return source.find((message) => message.id === state.activeThread.messageId) || null;
+}
+
+function openThread(message) {
+  state.activeThread = { type: message.sender_id ? "direct" : "channel", messageId: message.id };
+  renderThreadModal();
+  openModal("thread-modal");
+  requestAnimationFrame(() => $("#thread-input").focus());
+}
+
+function renderThreadModal() {
+  const message = getActiveThreadMessage();
+  if (!message) {
+    closeModal("thread-modal");
+    state.activeThread = null;
+    return;
+  }
+  const isDirect = Boolean(message.sender_id);
+  const channel = !isDirect ? state.channels.find((item) => item.id === message.channel_id) : null;
+  const otherId = isDirect ? (message.sender_id === currentSession.user.id ? message.recipient_id : message.sender_id) : null;
+  const other = state.members.find((member) => member.id === otherId);
+  $("#thread-context").textContent = isDirect
+    ? `Private conversation with ${other?.display_name || other?.email || "a Vine member"}`
+    : `Thread in #${channel?.name || "channel"}`;
+
+  const original = $("#thread-original");
+  original.replaceChildren(createCompactMessage(message, "Original message"));
+  const replies = $("#thread-replies");
+  replies.replaceChildren();
+  const items = getThreadReplies(message);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "thread-empty";
+    empty.textContent = "No replies yet. Start this thread.";
+    replies.append(empty);
+  } else {
+    items.forEach((reply) => replies.append(renderThreadReply(reply)));
+    requestAnimationFrame(() => { replies.scrollTop = replies.scrollHeight; });
+  }
+}
+
+function createCompactMessage(message, label = "") {
+  const authorId = message.author_id || message.sender_id;
+  const author = message.author || state.members.find((member) => member.id === authorId) || {};
+  const card = document.createElement("article");
+  card.className = "compact-message";
+  const avatar = document.createElement("span");
+  avatar.className = `avatar small ${avatarClass(authorId)}`;
+  avatar.textContent = getInitials(author.display_name || author.email || "Vine member");
+  const copy = document.createElement("div");
+  const meta = document.createElement("div");
+  meta.className = "compact-message-meta";
+  const name = document.createElement("strong");
+  name.textContent = author.display_name || author.email?.split("@")[0] || "Vine member";
+  const time = document.createElement("time");
+  time.textContent = formatTime(message.created_at);
+  meta.append(name, time);
+  if (label) {
+    const marker = document.createElement("span");
+    marker.textContent = label;
+    meta.append(marker);
+  }
+  const body = document.createElement("p");
+  appendFormattedText(body, message.body || (message.attachments?.length ? "Shared an attachment" : "Message"));
+  copy.append(meta, body);
+  card.append(avatar, copy);
+  return card;
+}
+
+function renderThreadReply(reply) {
+  const card = createCompactMessage(reply);
+  card.classList.add("thread-reply");
+  if (reply.edited_at) {
+    const label = document.createElement("span");
+    label.className = "edited-label";
+    label.textContent = "edited";
+    card.querySelector(".compact-message-meta").append(label);
+  }
+  if (reply.author_id === currentSession.user.id) {
+    const actions = document.createElement("div");
+    actions.className = "thread-reply-actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => editThreadReply(reply));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", () => deleteThreadReply(reply));
+    actions.append(edit, remove);
+    card.append(actions);
+  }
+  return card;
+}
+
+async function sendThreadReply(event) {
+  event.preventDefault();
+  const message = getActiveThreadMessage();
+  const body = $("#thread-input").value.trim();
+  if (!message || !body || state.busy) return;
+  const button = $("#thread-submit");
+  setButtonBusy(button, true, "Sending...");
+  const payload = {
+    author_id: currentSession.user.id,
+    body,
+    channel_message_id: message.sender_id ? null : message.id,
+    direct_message_id: message.sender_id ? message.id : null,
+  };
+  const { error } = await supabaseClient.from("thread_replies").insert(payload);
+  setButtonBusy(button, false, "Reply");
+  if (error) return showToast(error.message, "error");
+  $("#thread-input").value = "";
+  await loadWorkspace(false);
+}
+
+async function editThreadReply(reply) {
+  const next = window.prompt("Edit your thread reply:", reply.body || "");
+  if (next === null || next.trim() === reply.body) return;
+  if (!next.trim()) return showToast("A thread reply cannot be empty.", "error");
+  const { error } = await supabaseClient.from("thread_replies")
+    .update({ body: next.trim(), edited_at: new Date().toISOString() })
+    .eq("id", reply.id);
+  if (error) return showToast(error.message, "error");
+  await loadWorkspace(false);
+}
+
+async function deleteThreadReply(reply) {
+  if (!window.confirm("Delete this thread reply permanently?")) return;
+  const { error } = await supabaseClient.from("thread_replies").delete().eq("id", reply.id);
+  if (error) return showToast(error.message, "error");
+  await loadWorkspace(false);
+}
+
+async function togglePin(message) {
+  const existing = state.pins.find((pin) => pin.message_id === message.id);
+  const request = existing
+    ? supabaseClient.from("message_pins").delete().eq("id", existing.id)
+    : supabaseClient.from("message_pins").insert({
+      message_id: message.id,
+      channel_id: message.channel_id,
+      pinned_by: currentSession.user.id,
+    });
+  const { error } = await request;
+  if (error) return showToast(error.message, "error");
+  showToast(existing ? "Message unpinned." : "Message pinned to the channel.", "success");
+  await loadWorkspace(false);
+}
+
+function openPinnedMessages() {
+  const channel = state.channels.find((item) => item.id === state.selectedChannelId);
+  if (!channel || state.selectedDirectUserId) return showToast("Open a channel to view its pinned messages.");
+  const items = state.pins
+    .filter((pin) => pin.channel_id === channel.id)
+    .map((pin) => state.messages.find((message) => message.id === pin.message_id))
+    .filter(Boolean);
+  showActivityModal("Pinned messages", `Saved messages in #${channel.name}.`, items.map((message) => ({
+    message,
+    label: `#${channel.name}`,
+    action: () => navigateToMessage(message),
+  })));
+}
+
+function openConversationOptions() {
+  if (state.selectedDirectUserId) {
+    openMembersModal();
+    return;
+  }
+  openPinnedMessages();
+}
+
+function openThreadsOverview() {
+  const items = [...state.messages, ...state.directMessages]
+    .map((message) => ({ message, replies: getThreadReplies(message) }))
+    .filter((item) => item.replies.length)
+    .sort((a, b) => new Date(b.replies.at(-1).created_at) - new Date(a.replies.at(-1).created_at))
+    .map(({ message, replies }) => ({
+      message,
+      label: `${replies.length} ${replies.length === 1 ? "reply" : "replies"}`,
+      action: () => { closeModal("activity-modal"); openThread(message); },
+    }));
+  showActivityModal("Threads", "Messages with active reply threads.", items);
+}
+
+function mentionsCurrentMember(text) {
+  const handle = memberHandle(currentProfile);
+  return new RegExp(`(^|\\s)@${escapeRegExp(handle)}(?=\\s|[.,!?;:]|$)`, "i").test(String(text || ""));
+}
+
+function openMentionsOverview() {
+  const items = [];
+  [...state.messages, ...state.directMessages].forEach((message) => {
+    if (mentionsCurrentMember(message.body)) {
+      items.push({ message, label: "Mentioned you", action: () => navigateToMessage(message) });
+    }
+  });
+  state.threadReplies.forEach((reply) => {
+    if (!mentionsCurrentMember(reply.body)) return;
+    const parent = state.messages.find((message) => message.id === reply.channel_message_id)
+      || state.directMessages.find((message) => message.id === reply.direct_message_id);
+    if (parent) items.push({ message: reply, label: "Mentioned you in a thread", action: () => { closeModal("activity-modal"); openThread(parent); } });
+  });
+  items.sort((a, b) => new Date(b.message.created_at) - new Date(a.message.created_at));
+  showActivityModal("Mentions", `Messages containing @${memberHandle(currentProfile)}.`, items);
+}
+
+function showActivityModal(title, description, items) {
+  $("#activity-title").textContent = title;
+  $("#activity-description").textContent = description;
+  const list = $("#activity-list");
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "activity-empty";
+    empty.textContent = `No ${title.toLowerCase()} yet.`;
+    list.append(empty);
+  } else {
+    items.forEach(({ message, label, action }) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "activity-card";
+      const marker = document.createElement("span");
+      marker.className = "activity-card-label";
+      marker.textContent = label;
+      const body = document.createElement("p");
+      appendFormattedText(body, message.body || "Shared an attachment");
+      const time = document.createElement("time");
+      time.textContent = `${formatDateLabel(message.created_at)} at ${formatTime(message.created_at)}`;
+      button.append(marker, body, time);
+      button.addEventListener("click", action);
+      list.append(button);
+    });
+  }
+  openModal("activity-modal");
+}
+
+function navigateToMessage(message) {
+  closeModal("activity-modal");
+  if (message.channel_id) {
+    selectChannel(message.channel_id);
+  } else {
+    const otherId = message.sender_id === currentSession.user.id ? message.recipient_id : message.sender_id;
+    selectDirectMessage(otherId);
+  }
+  requestAnimationFrame(() => {
+    document.querySelector(`[data-message-id="${message.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
+function renderActivityBadges() {
+  const threadCount = [...state.messages, ...state.directMessages].filter((message) => getThreadReplies(message).length).length;
+  const mentionCount = [...state.messages, ...state.directMessages, ...state.threadReplies].filter((message) => mentionsCurrentMember(message.body)).length;
+  $("#thread-total").textContent = threadCount;
+  $("#thread-total").hidden = threadCount === 0;
+  $("#mention-total").textContent = mentionCount;
+  $("#mention-total").hidden = mentionCount === 0;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function editMessage(message) {
@@ -849,7 +1361,7 @@ async function updateProfile(event) {
   const { data, error } = await supabaseClient.from("profiles")
     .update({ display_name: displayName })
     .eq("id", currentSession.user.id)
-    .select("id,email,display_name,role")
+    .select("id,email,display_name,role,job_title")
     .single();
   setButtonBusy(button, false, "Save profile");
   if (error) return showToast(error.message, "error");
@@ -924,6 +1436,7 @@ async function createMember(event) {
 
   const displayName = $("#member-display-name").value.trim();
   const email = $("#member-email").value.trim().toLowerCase();
+  const jobTitle = $("#member-job-title").value.trim();
   const role = $("#member-role").value;
   const button = $("#member-submit");
   hideError("member-error");
@@ -931,7 +1444,7 @@ async function createMember(event) {
 
   try {
     const { data, error } = await supabaseClient.functions.invoke("add-member", {
-      body: { displayName, email, role },
+      body: { action: "create", displayName, email, jobTitle, role },
     });
 
     if (error) {
@@ -986,8 +1499,10 @@ function renderCrm() {
   const employees = $("#crm-employees");
   employees.replaceChildren();
   state.members.forEach((member) => {
-    const row = document.createElement("div");
+    const row = document.createElement("button");
+    row.type = "button";
     row.className = "crm-row";
+    row.setAttribute("aria-label", `Edit ${member.display_name || member.email}`);
     const avatar = document.createElement("span");
     avatar.className = `avatar small ${avatarClass(member.id)}`;
     avatar.textContent = getInitials(member.display_name || member.email);
@@ -996,12 +1511,13 @@ function renderCrm() {
     const name = document.createElement("strong");
     name.textContent = member.display_name || member.email.split("@")[0];
     const detail = document.createElement("small");
-    detail.textContent = member.email;
+    detail.textContent = [member.job_title, member.email].filter(Boolean).join(" - ");
     copy.append(name, detail);
     const role = document.createElement("span");
     role.className = `role-pill ${member.role}`;
     role.textContent = titleCase(member.role);
     row.append(avatar, copy, role);
+    row.addEventListener("click", () => openEmployeeEditor(member));
     employees.append(row);
   });
 
@@ -1031,6 +1547,94 @@ function renderCrm() {
     row.append(avatar, copy, status);
     clients.append(row);
   });
+}
+
+function openEmployeeEditor(member) {
+  if (currentProfile?.role !== "admin") return;
+  $("#employee-id").value = member.id;
+  $("#employee-display-name").value = member.display_name || member.email.split("@")[0];
+  $("#employee-job-title").value = member.job_title || "";
+  $("#employee-role").value = member.role;
+  $("#employee-role").disabled = member.id === currentSession.user.id;
+  $("#employee-modal-email").textContent = member.email;
+  $("#delete-employee").disabled = member.id === currentSession.user.id;
+  $("#delete-employee").title = member.id === currentSession.user.id ? "You cannot delete your own signed-in account." : "Delete this employee";
+  hideError("employee-error");
+  closeModal("crm-modal");
+  openModal("employee-modal");
+  $("#employee-display-name").focus();
+}
+
+async function updateEmployee(event) {
+  event.preventDefault();
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  const button = $("#employee-submit");
+  const userId = $("#employee-id").value;
+  hideError("employee-error");
+  setButtonBusy(button, true, "Saving...");
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("add-member", {
+      body: {
+        action: "update",
+        userId,
+        displayName: $("#employee-display-name").value.trim(),
+        jobTitle: $("#employee-job-title").value.trim(),
+        role: $("#employee-role").value,
+      },
+    });
+    if (error) throw await memberFunctionError(error, "The employee could not be updated.");
+    if (data?.error) throw new Error(data.error);
+    closeModal("employee-modal");
+    await loadWorkspace(false);
+    if (userId === currentSession.user.id) {
+      currentProfile = state.members.find((member) => member.id === userId) || currentProfile;
+      applyProfile();
+    }
+    openCrm();
+    showToast("Employee updated.", "success");
+  } catch (error) {
+    showFormError("employee-error", error.message || "The employee could not be updated.");
+  } finally {
+    setButtonBusy(button, false, "Save employee");
+  }
+}
+
+async function deleteEmployee() {
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  const userId = $("#employee-id").value;
+  const member = state.members.find((item) => item.id === userId);
+  if (!member || userId === currentSession.user.id) return showFormError("employee-error", "You cannot delete your own signed-in account.");
+  const name = member.display_name || member.email;
+  if (!window.confirm(`Delete ${name} from Vine Connect?\n\nTheir account, messages, and access will be permanently removed.`)) return;
+  const button = $("#delete-employee");
+  hideError("employee-error");
+  setButtonBusy(button, true, "Deleting...");
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("add-member", {
+      body: { action: "delete", userId },
+    });
+    if (error) throw await memberFunctionError(error, "The employee could not be deleted.");
+    if (data?.error) throw new Error(data.error);
+    closeModal("employee-modal");
+    await loadWorkspace(false);
+    openCrm();
+    showToast("Employee deleted.", "success");
+  } catch (error) {
+    showFormError("employee-error", error.message || "The employee could not be deleted.");
+  } finally {
+    setButtonBusy(button, false, "Delete employee");
+  }
+}
+
+async function memberFunctionError(error, fallback) {
+  let message = error?.message || fallback;
+  try {
+    const details = await error.context?.json();
+    message = details?.error || details?.message || message;
+  } catch (_ignored) {
+    // The Supabase client message is used when the response body is unavailable.
+  }
+  return new Error(message);
 }
 
 function openClientForm() {
@@ -1114,9 +1718,26 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "channels" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => handleMessageChange(payload, "channel"))
     .on("postgres_changes", { event: "*", schema: "public", table: "direct_messages" }, (payload) => handleMessageChange(payload, "direct"))
+    .on("postgres_changes", { event: "*", schema: "public", table: "thread_replies" }, handleThreadReplyChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "message_pins" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "crm_clients" }, () => scheduleReload(false))
     .subscribe();
+}
+
+function handleThreadReplyChange(payload) {
+  if (payload.eventType === "INSERT" && payload.new.author_id !== currentSession?.user.id) {
+    playNotificationSound();
+    const parent = state.messages.find((message) => message.id === payload.new.channel_message_id)
+      || state.directMessages.find((message) => message.id === payload.new.direct_message_id);
+    if (parent?.channel_id && state.selectedChannelId === parent.channel_id && !state.selectedDirectUserId) {
+      markConversationRead("channel", parent.channel_id);
+    } else if (parent?.sender_id) {
+      const otherId = parent.sender_id === currentSession.user.id ? parent.recipient_id : parent.sender_id;
+      if (state.selectedDirectUserId === otherId) markConversationRead("direct", otherId);
+    }
+  }
+  scheduleReload(false);
 }
 
 function handleMessageChange(payload, type) {
@@ -1188,16 +1809,30 @@ function saveViewState() {
 
 function isChannelUnread(channelId) {
   const viewedAt = state.lastViewed[`channel:${channelId}`] || "1970-01-01T00:00:00.000Z";
-  return state.messages.some((message) => message.channel_id === channelId
+  const unreadMessage = state.messages.some((message) => message.channel_id === channelId
     && message.author_id !== currentSession?.user.id
     && new Date(message.created_at) > new Date(viewedAt));
+  const unreadReply = state.threadReplies.some((reply) => {
+    const parent = state.messages.find((message) => message.id === reply.channel_message_id);
+    return parent?.channel_id === channelId
+      && reply.author_id !== currentSession?.user.id
+      && new Date(reply.created_at) > new Date(viewedAt);
+  });
+  return unreadMessage || unreadReply;
 }
 
 function isDirectUnread(memberId) {
   const viewedAt = state.lastViewed[`direct:${memberId}`] || "1970-01-01T00:00:00.000Z";
-  return state.directMessages.some((message) => message.sender_id === memberId
+  const unreadMessage = state.directMessages.some((message) => message.sender_id === memberId
     && message.recipient_id === currentSession?.user.id
     && new Date(message.created_at) > new Date(viewedAt));
+  const unreadReply = state.threadReplies.some((reply) => {
+    const parent = state.directMessages.find((message) => message.id === reply.direct_message_id);
+    if (!parent || reply.author_id === currentSession?.user.id || new Date(reply.created_at) <= new Date(viewedAt)) return false;
+    return (parent.sender_id === memberId && parent.recipient_id === currentSession?.user.id)
+      || (parent.sender_id === currentSession?.user.id && parent.recipient_id === memberId);
+  });
+  return unreadMessage || unreadReply;
 }
 
 function unlockNotificationAudio() {
@@ -1211,11 +1846,38 @@ function unlockNotificationAudio() {
 }
 
 function playNotificationSound() {
+  if (state.notificationsMuted) return;
   notificationAudio.currentTime = 0;
   notificationAudio.volume = 0.85;
   notificationAudio.play().catch(() => {
     // Browsers can block sound until the member interacts with the page once.
   });
+}
+
+function applyNotificationPreference() {
+  state.notificationsMuted = localStorage.getItem("vine-connect-notifications-muted") === "true";
+  updateNotificationButton();
+}
+
+function toggleNotifications() {
+  state.notificationsMuted = !state.notificationsMuted;
+  localStorage.setItem("vine-connect-notifications-muted", String(state.notificationsMuted));
+  if (state.notificationsMuted) {
+    notificationAudio.pause();
+    notificationAudio.currentTime = 0;
+  }
+  updateNotificationButton();
+  showToast(state.notificationsMuted ? "Notification sound muted." : "Notification sound turned on.", "success");
+}
+
+function updateNotificationButton() {
+  const button = $("#toggle-notifications");
+  if (!button) return;
+  const label = state.notificationsMuted ? "Turn on notification sound" : "Mute notification sound";
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.classList.toggle("muted", state.notificationsMuted);
+  button.querySelector(".glyph").textContent = state.notificationsMuted ? "\uD83D\uDD15" : "\uD83D\uDD14";
 }
 
 async function signOut() {

@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#08271d">
   <meta name="description" content="Vine Connect by Vine Solutions - secure company chat.">
   <title>Vine Connect | Vine Solutions</title>
-  <link rel="stylesheet" href="style.css?v=20260716-2">
+  <link rel="stylesheet" href="style.css?v=20260716-3">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script src="supabase-config.js" defer></script>
-  <script src="app.js?v=20260716-2" defer></script>
+  <script src="app.js?v=20260716-3" defer></script>
 </head>
 <body>
   <section class="auth-screen" id="auth-screen">
@@ -51,23 +51,24 @@
   <main class="chat-shell" id="app" hidden>
     <div class="topbar">
       <div class="topbar-spacer"></div>
-      <button class="history-button" type="button" aria-label="Recent history"><i class="glyph">&#9714;</i></button>
+      <button class="history-button" id="open-recent" type="button" aria-label="Open recent threads" title="Recent threads"><i class="glyph">&#9714;</i></button>
       <button class="global-search" id="open-search" type="button" aria-label="Search Vine Connect">
         <i class="glyph">&#8981;</i><span>Search Vine Connect</span><kbd>Ctrl K</kbd>
       </button>
+      <button class="topbar-icon notification-toggle" id="toggle-notifications" type="button" aria-label="Mute notification sound" title="Mute notification sound"><i class="glyph">&#128276;</i></button>
       <button class="topbar-icon theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"><i class="glyph">&#9789;</i></button>
     </div>
 
     <aside class="sidebar" id="sidebar">
       <div class="workspace-head">
         <span class="workspace-logo" aria-hidden="true"><img src="vine-solutions-logo.png" alt=""></span>
-        <button class="workspace-title" type="button"><span class="workspace-title-copy"><strong>Vine Connect</strong><small>Vine Solutions</small></span><i class="glyph small">&#8963;</i></button>
+        <button class="workspace-title" id="workspace-menu" type="button"><span class="workspace-title-copy"><strong>Vine Connect</strong><small>Vine Solutions</small></span><i class="glyph small">&#8963;</i></button>
         <button class="compose-button" id="focus-composer" type="button" aria-label="Compose a new message"><i class="glyph glyph-button">&#9998;</i></button>
       </div>
       <nav class="sidebar-nav" aria-label="Workspace navigation">
-        <button class="side-link" type="button"><i class="glyph">&#9676;</i><span>Threads</span></button>
-        <button class="side-link" type="button"><i class="glyph">@</i><span>Mentions</span></button>
-        <button class="side-link" type="button"><i class="glyph">&#9734;</i><span>Starred</span></button>
+        <button class="side-link" id="open-threads" type="button"><i class="glyph">&#9676;</i><span>Threads</span><span class="side-badge subtle" id="thread-total">0</span></button>
+        <button class="side-link" id="open-mentions" type="button"><i class="glyph">@</i><span>Mentions</span><span class="side-badge subtle" id="mention-total">0</span></button>
+        <button class="side-link" id="open-pins-sidebar" type="button"><i class="glyph">&#9733;</i><span>Pinned</span></button>
         <button class="side-link" id="open-crm" type="button" hidden><i class="glyph">&#9638;</i><span>Mini CRM</span><span class="admin-tag">Admin</span></button>
         <p class="local-mode-note"><strong>Secure workspace</strong><br>Messages and private files are stored in your Supabase project.</p>
         <div class="channel-section">
@@ -100,10 +101,11 @@
           <p id="channel-description"></p>
         </div>
         <div class="header-actions">
+          <button class="pin-header-button" id="open-pins" type="button" aria-label="View pinned messages" title="Pinned messages"><i class="glyph">&#9733;</i><strong id="pin-count">0</strong></button>
           <button class="member-stack" id="open-members" type="button" aria-label="View members">
             <span class="mini-avatar avatar-coral" id="member-mini-1">AI</span><span class="mini-avatar avatar-blue" id="member-mini-2">KE</span><span class="mini-avatar avatar-mint" id="member-mini-3">AD</span><strong id="member-count">6</strong>
           </button>
-          <button type="button" aria-label="More channel options"><i class="glyph">...</i></button>
+          <button id="conversation-more" type="button" aria-label="More conversation options"><i class="glyph">...</i></button>
         </div>
       </header>
 
@@ -118,10 +120,10 @@
             <div class="format-tools">
               <button id="attach-files" type="button" aria-label="Attach files"><i class="glyph glyph-button">+</i></button>
               <span class="tool-divider"></span>
-              <button type="button" aria-label="Bold"><b>B</b></button>
-              <button type="button" aria-label="Italic"><i>I</i></button>
-              <button type="button" aria-label="Mention someone"><i class="glyph">@</i></button>
-              <button type="button" aria-label="Add emoji"><i class="glyph">&#9786;</i></button>
+              <button id="format-bold" type="button" aria-label="Bold" title="Bold"><b>B</b></button>
+              <button id="format-italic" type="button" aria-label="Italic" title="Italic"><i>I</i></button>
+              <button id="format-mention" type="button" aria-label="Mention someone" title="Mention someone"><i class="glyph">@</i></button>
+              <button id="format-emoji" type="button" aria-label="Add emoji" title="Add emoji"><i class="glyph">&#9786;</i></button>
             </div>
             <button class="send-button" id="send-message" type="button" aria-label="Send message" disabled><i class="glyph">&#10148;</i></button>
           </div>
@@ -185,6 +187,7 @@
       <form id="add-member-form">
         <label>Display name<input id="member-display-name" autocomplete="name" placeholder="e.g. Maria Santos" maxlength="60" required></label>
         <label>Email address<input id="member-email" type="email" autocomplete="email" placeholder="name@vinesolutions.com" maxlength="254" required></label>
+        <label>Job title <span>Optional</span><input id="member-job-title" placeholder="e.g. Account Manager" maxlength="80"></label>
         <label>Workspace role
           <select id="member-role" required>
             <option value="employee">Employee</option>
@@ -258,6 +261,83 @@
         <p class="form-error" id="client-error" role="alert" hidden></p>
         <button class="primary-button" id="client-submit" type="submit">Save client</button>
       </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="employee-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="employee-modal-title">
+      <button class="modal-close" data-close="employee-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">@</i></div>
+      <h2 id="employee-modal-title">Edit employee</h2>
+      <p id="employee-modal-email"></p>
+      <form id="employee-form">
+        <input id="employee-id" type="hidden">
+        <label>Display name<input id="employee-display-name" maxlength="60" required></label>
+        <label>Job title <span>Optional</span><input id="employee-job-title" maxlength="80" placeholder="e.g. Account Manager"></label>
+        <label>Workspace access
+          <select id="employee-role" required>
+            <option value="employee">Employee</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <div class="modal-tip"><i class="glyph">!</i><span>Admins can create and delete channels, add members, and manage this CRM.</span></div>
+        <p class="form-error" id="employee-error" role="alert" hidden></p>
+        <div class="employee-modal-actions">
+          <button class="danger-button" id="delete-employee" type="button">Delete employee</button>
+          <button class="primary-button" id="employee-submit" type="submit">Save employee</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="thread-modal" role="presentation" hidden>
+    <div class="modal thread-modal" role="dialog" aria-modal="true" aria-labelledby="thread-title">
+      <button class="modal-close" data-close="thread-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="thread-heading"><span class="eyebrow">Conversation</span><h2 id="thread-title">Message thread</h2><p id="thread-context"></p></div>
+      <div class="thread-original" id="thread-original"></div>
+      <div class="thread-replies" id="thread-replies"></div>
+      <form class="thread-composer" id="thread-form">
+        <textarea id="thread-input" rows="2" maxlength="10000" placeholder="Reply in thread" aria-label="Reply in thread" required></textarea>
+        <div class="thread-tools">
+          <div class="format-tools">
+            <button id="thread-bold" type="button" aria-label="Bold thread reply" title="Bold"><b>B</b></button>
+            <button id="thread-italic" type="button" aria-label="Italic thread reply" title="Italic"><i>I</i></button>
+            <button id="thread-mention" type="button" aria-label="Mention someone in thread" title="Mention someone"><i class="glyph">@</i></button>
+            <button id="thread-emoji" type="button" aria-label="Add emoji to thread" title="Add emoji"><i class="glyph">&#9786;</i></button>
+          </div>
+          <button class="primary-button compact-button" id="thread-submit" type="submit">Reply</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="activity-modal" role="presentation" hidden>
+    <div class="modal activity-modal" role="dialog" aria-modal="true" aria-labelledby="activity-title">
+      <button class="modal-close" data-close="activity-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <span class="eyebrow" id="activity-eyebrow">Workspace</span>
+      <h2 id="activity-title">Activity</h2>
+      <p id="activity-description"></p>
+      <div class="activity-list" id="activity-list"></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="mention-modal" role="presentation" hidden>
+    <div class="modal picker-modal" role="dialog" aria-modal="true" aria-labelledby="mention-picker-title">
+      <button class="modal-close" data-close="mention-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">@</i></div>
+      <h2 id="mention-picker-title">Mention a member</h2>
+      <p>Select a person to add their mention to your message.</p>
+      <div class="picker-list" id="mention-picker-list"></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="emoji-modal" role="presentation" hidden>
+    <div class="modal picker-modal" role="dialog" aria-modal="true" aria-labelledby="emoji-picker-title">
+      <button class="modal-close" data-close="emoji-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#9786;</i></div>
+      <h2 id="emoji-picker-title">Add an emoji</h2>
+      <p>Choose an emoji to insert at the cursor.</p>
+      <div class="emoji-grid" id="emoji-picker-list"></div>
     </div>
   </div>
 
