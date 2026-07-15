@@ -7,14 +7,19 @@ const STORAGE_BUCKET = "chat-files";
 const state = {
   channels: [],
   messages: [],
+  directMessages: [],
   members: [],
+  clients: [],
   selectedChannelId: null,
+  selectedDirectUserId: null,
   expanded: new Set(),
   pendingFiles: [],
   pendingPreviews: new Map(),
   attachmentUrls: new Map(),
   realtime: null,
   reloadTimer: null,
+  lastViewed: {},
+  viewStateInitialized: false,
   busy: false,
 };
 
@@ -22,6 +27,8 @@ let supabaseClient = null;
 let currentSession = null;
 let currentProfile = null;
 let toastTimer = null;
+const notificationAudio = new Audio("notification.mp3?v=20260716-2");
+notificationAudio.preload = "auto";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -83,6 +90,9 @@ function bindEvents() {
   $("#copy-member-password").addEventListener("click", copyTemporaryPassword);
   $("#finish-member-created").addEventListener("click", () => closeModal("member-created-modal"));
   $("#open-search").addEventListener("click", openSearch);
+  $("#open-crm").addEventListener("click", openCrm);
+  $("#open-client-form").addEventListener("click", openClientForm);
+  $("#client-form").addEventListener("submit", createClient);
   $("#search-input").addEventListener("input", renderSearchResults);
   $("#mobile-menu").addEventListener("click", openSidebar);
   $("#sidebar-scrim").addEventListener("click", closeSidebar);
@@ -93,6 +103,7 @@ function bindEvents() {
   $$(".modal-layer, .search-layer").forEach((layer) => layer.addEventListener("click", (event) => {
     if (event.target === layer) closeModal(layer.id);
   }));
+  document.addEventListener("pointerdown", unlockNotificationAudio, { once: true });
 
   const composer = $("#composer-wrap");
   ["dragenter", "dragover"].forEach((name) => composer.addEventListener(name, (event) => {
@@ -140,7 +151,12 @@ async function syncSession(session) {
     currentProfile = null;
     state.channels = [];
     state.messages = [];
+    state.directMessages = [];
     state.members = [];
+    state.clients = [];
+    state.selectedDirectUserId = null;
+    state.lastViewed = {};
+    state.viewStateInitialized = false;
     $("#app").hidden = true;
     $("#auth-screen").hidden = false;
     $("#login-form").hidden = false;
@@ -172,6 +188,7 @@ async function syncSession(session) {
   }
 
   currentProfile = profile;
+  loadViewState();
   $("#auth-screen").hidden = true;
   $("#app").hidden = false;
   applyProfile();
@@ -204,13 +221,18 @@ async function loadWorkspace(scrollToBottom = false) {
   const messagePane = $("#message-pane");
   if (!state.channels.length) messagePane.innerHTML = '<div class="message-loading"><i class="glyph spin">&#9696;</i> Loading workspace...</div>';
 
-  const [channelsResult, messagesResult, membersResult] = await Promise.all([
+  const clientsRequest = currentProfile?.role === "admin"
+    ? supabaseClient.from("crm_clients").select("id,name,company,email,phone,status,notes,created_at,updated_at").order("updated_at", { ascending: false })
+    : Promise.resolve({ data: [], error: null });
+  const [channelsResult, messagesResult, directResult, membersResult, clientsResult] = await Promise.all([
     supabaseClient.from("channels").select("id,name,description,parent_id,created_at").order("created_at", { ascending: true }),
-    supabaseClient.from("messages").select("id,channel_id,author_id,body,attachments,created_at,author:profiles!messages_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(1000),
+    supabaseClient.from("messages").select("id,channel_id,author_id,body,attachments,created_at,edited_at,author:profiles!messages_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(1000),
+    supabaseClient.from("direct_messages").select("id,sender_id,recipient_id,body,attachments,created_at,edited_at").order("created_at", { ascending: true }).limit(1000),
     supabaseClient.from("profiles").select("id,email,display_name,role").order("display_name", { ascending: true }),
+    clientsRequest,
   ]);
 
-  const firstError = channelsResult.error || messagesResult.error || membersResult.error;
+  const firstError = channelsResult.error || messagesResult.error || directResult.error || membersResult.error || clientsResult.error;
   if (firstError) {
     messagePane.innerHTML = `<div class="empty-channel"><span class="empty-icon">!</span><h2>Workspace could not load</h2><p>${escapeHtml(firstError.message)}</p></div>`;
     showToast(firstError.message, "error");
@@ -219,18 +241,28 @@ async function loadWorkspace(scrollToBottom = false) {
 
   state.channels = channelsResult.data || [];
   state.messages = messagesResult.data || [];
+  state.directMessages = directResult.data || [];
   state.members = membersResult.data || [];
+  state.clients = clientsResult.data || [];
+
+  if (state.selectedDirectUserId && !state.members.some((member) => member.id === state.selectedDirectUserId)) {
+    state.selectedDirectUserId = null;
+  }
 
   const savedChannel = localStorage.getItem("vine-connect-channel");
   const selectionExists = state.channels.some((channel) => channel.id === state.selectedChannelId);
-  if (!selectionExists) {
+  if (!state.selectedDirectUserId && !selectionExists) {
     state.selectedChannelId = state.channels.some((channel) => channel.id === savedChannel)
       ? savedChannel
       : (state.channels.find((channel) => channel.name === "general") || state.channels[0])?.id || null;
   }
 
+  initializeViewState();
+
   renderChannels();
+  renderDirectMessages();
   renderMembers();
+  renderCrm();
   renderConversation(scrollToBottom);
 }
 
@@ -248,6 +280,7 @@ function applyProfile() {
   $("#display-name").value = name;
   $("#open-channel-modal").hidden = currentProfile.role !== "admin";
   $("#open-add-member").hidden = currentProfile.role !== "admin";
+  $("#open-crm").hidden = currentProfile.role !== "admin";
 }
 
 function renderChannels() {
@@ -265,9 +298,10 @@ function renderChannels() {
 
   topLevel.forEach((channel) => {
     const children = state.channels.filter((item) => item.parent_id === channel.id);
+    const unread = isChannelUnread(channel.id) || children.some((child) => isChannelUnread(child.id));
     const group = document.createElement("div");
     const row = document.createElement("div");
-    row.className = `channel-row${channel.id === state.selectedChannelId ? " active" : ""}`;
+    row.className = `channel-row${channel.id === state.selectedChannelId && !state.selectedDirectUserId ? " active" : ""}${unread ? " unread" : ""}`;
 
     if (children.length) {
       const caret = document.createElement("button");
@@ -286,18 +320,20 @@ function renderChannels() {
       row.append(spacer);
     }
 
-    row.append(channelButton(channel));
+    row.append(channelButton(channel, unread));
     group.append(row);
 
     if (children.length && state.expanded.has(channel.id)) {
       children.forEach((child) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = `subchannel${child.id === state.selectedChannelId ? " active" : ""}`;
+        const childUnread = isChannelUnread(child.id);
+        button.className = `subchannel${child.id === state.selectedChannelId && !state.selectedDirectUserId ? " active" : ""}${childUnread ? " unread" : ""}`;
         button.innerHTML = '<span class="sub-line"></span><i class="glyph">#</i>';
         const name = document.createElement("span");
         name.textContent = child.name;
         button.append(name);
+        if (childUnread) button.append(unreadDot());
         button.addEventListener("click", () => selectChannel(child.id));
         group.append(button);
       });
@@ -306,7 +342,7 @@ function renderChannels() {
   });
 }
 
-function channelButton(channel) {
+function channelButton(channel, unread = false) {
   const button = document.createElement("button");
   button.className = "channel-button";
   button.type = "button";
@@ -314,23 +350,101 @@ function channelButton(channel) {
   const name = document.createElement("span");
   name.textContent = channel.name;
   button.append(name);
+  if (unread) button.append(unreadDot());
   button.addEventListener("click", () => selectChannel(channel.id));
   return button;
 }
 
 function selectChannel(id) {
   state.selectedChannelId = id;
+  state.selectedDirectUserId = null;
   localStorage.setItem("vine-connect-channel", id);
   const channel = state.channels.find((item) => item.id === id);
   if (channel?.parent_id) state.expanded.add(channel.parent_id);
+  markConversationRead("channel", id);
   renderChannels();
+  renderDirectMessages();
   renderConversation(true);
   closeSidebar();
 }
 
+function renderDirectMessages() {
+  const container = $("#direct-list");
+  container.replaceChildren();
+  state.members.filter((member) => member.id !== currentSession?.user.id).forEach((member) => {
+    const button = document.createElement("button");
+    const unread = isDirectUnread(member.id);
+    button.type = "button";
+    button.className = `direct-message-button${member.id === state.selectedDirectUserId ? " active" : ""}${unread ? " unread" : ""}`;
+    const avatar = document.createElement("span");
+    avatar.className = `direct-avatar ${avatarClass(member.id)}`;
+    avatar.textContent = getInitials(member.display_name || member.email);
+    const name = document.createElement("span");
+    name.className = "direct-name";
+    name.textContent = member.display_name || member.email.split("@")[0];
+    button.append(avatar, name);
+    if (unread) button.append(unreadDot());
+    button.addEventListener("click", () => selectDirectMessage(member.id));
+    container.append(button);
+  });
+}
+
+function selectDirectMessage(memberId) {
+  if (memberId === currentSession?.user.id) return;
+  state.selectedDirectUserId = memberId;
+  state.selectedChannelId = null;
+  markConversationRead("direct", memberId);
+  renderChannels();
+  renderDirectMessages();
+  renderConversation(true);
+  closeModal("members-modal");
+  closeSidebar();
+}
+
+function unreadDot() {
+  const dot = document.createElement("span");
+  dot.className = "unread-dot";
+  dot.setAttribute("aria-label", "Unread messages");
+  return dot;
+}
+
 function renderConversation(scrollToBottom = false) {
+  if (state.selectedDirectUserId) {
+    const member = state.members.find((item) => item.id === state.selectedDirectUserId);
+    if (!member) {
+      state.selectedDirectUserId = null;
+      return renderConversation(scrollToBottom);
+    }
+    const displayName = member.display_name || member.email.split("@")[0];
+    $("#conversation-symbol").textContent = "@";
+    $("#channel-name").textContent = displayName;
+    $("#channel-description").textContent = `${member.email} - private conversation`;
+    $("#message-input").placeholder = `Message ${displayName}`;
+    $("#message-input").disabled = false;
+    markConversationRead("direct", member.id);
+
+    const messages = state.directMessages.filter((message) => (
+      message.sender_id === currentSession.user.id && message.recipient_id === member.id
+    ) || (
+      message.sender_id === member.id && message.recipient_id === currentSession.user.id
+    ));
+    const pane = $("#message-pane");
+    pane.replaceChildren();
+    const intro = document.createElement("section");
+    intro.className = "channel-intro";
+    intro.innerHTML = `<div class="intro-hash">@</div><h2>${escapeHtml(displayName)}</h2><p>This private conversation is visible only to you and ${escapeHtml(displayName)}.</p>`;
+    pane.append(intro);
+    appendMessages(pane, messages);
+    renderChannels();
+    renderDirectMessages();
+    if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
+    updateSendState();
+    return;
+  }
+
   const channel = state.channels.find((item) => item.id === state.selectedChannelId);
   if (!channel) {
+    $("#conversation-symbol").textContent = "#";
     $("#channel-name").textContent = "Vine Connect";
     $("#channel-description").textContent = "Your workspace has no channels yet.";
     $("#message-input").placeholder = "No channel selected";
@@ -341,6 +455,7 @@ function renderConversation(scrollToBottom = false) {
   }
 
   $("#message-input").disabled = false;
+  $("#conversation-symbol").textContent = "#";
   $("#channel-name").textContent = channel.name;
   $("#channel-description").textContent = channel.description || "Vine Solutions company conversation";
   $("#message-input").placeholder = `Message #${channel.name}`;
@@ -352,7 +467,16 @@ function renderConversation(scrollToBottom = false) {
   intro.className = "channel-intro";
   intro.innerHTML = `<div class="intro-hash">#</div><h2>${escapeHtml(channel.name)}</h2><p>${escapeHtml(channel.description || `This is the start of #${channel.name}.`)}</p>`;
   pane.append(intro);
+  markConversationRead("channel", channel.id);
+  appendMessages(pane, messages);
+  renderChannels();
+  renderDirectMessages();
 
+  if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
+  updateSendState();
+}
+
+function appendMessages(pane, messages) {
   if (!messages.length) {
     const empty = document.createElement("div");
     empty.className = "empty-message-note";
@@ -372,19 +496,17 @@ function renderConversation(scrollToBottom = false) {
     }
     pane.append(renderMessage(message));
   });
-
-  if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
-  updateSendState();
 }
 
 function renderMessage(message) {
-  const author = message.author || state.members.find((member) => member.id === message.author_id) || {};
+  const authorId = message.author_id || message.sender_id;
+  const author = message.author || state.members.find((member) => member.id === authorId) || {};
   const name = author.display_name || author.email?.split("@")[0] || "Vine member";
   const row = document.createElement("article");
   row.className = "message-row";
 
   const avatar = document.createElement("span");
-  avatar.className = `avatar ${avatarClass(message.author_id)}`;
+  avatar.className = `avatar ${avatarClass(authorId)}`;
   avatar.textContent = getInitials(name);
   row.append(avatar);
 
@@ -398,6 +520,12 @@ function renderMessage(message) {
   time.dateTime = message.created_at;
   time.textContent = formatTime(message.created_at);
   meta.append(strong, time);
+  if (message.edited_at) {
+    const edited = document.createElement("span");
+    edited.className = "edited-label";
+    edited.textContent = "edited";
+    meta.append(edited);
+  }
   content.append(meta);
 
   if (message.body) {
@@ -415,7 +543,75 @@ function renderMessage(message) {
   });
 
   row.append(content);
+  if (authorId === currentSession?.user.id) {
+    row.classList.add("own-message");
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.title = "Edit message";
+    editButton.setAttribute("aria-label", "Edit message");
+    editButton.textContent = "\u270E";
+    editButton.addEventListener("click", () => editMessage(message));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.title = "Delete message";
+    deleteButton.setAttribute("aria-label", "Delete message");
+    deleteButton.textContent = "\u00D7";
+    deleteButton.addEventListener("click", () => deleteMessage(message));
+    actions.append(editButton, deleteButton);
+    row.append(actions);
+  }
   return row;
+}
+
+async function editMessage(message) {
+  const isDirect = Boolean(message.sender_id);
+  const previousBody = message.body || "";
+  const nextBody = window.prompt("Edit your message:", previousBody);
+  if (nextBody === null || nextBody === previousBody) return;
+  const body = nextBody.trim();
+  const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+  if (!body && !hasAttachments) {
+    showToast("A message without an attachment cannot be empty.", "error");
+    return;
+  }
+  if (body.length > 10000) {
+    showToast("Messages can contain up to 10,000 characters.", "error");
+    return;
+  }
+
+  const table = isDirect ? "direct_messages" : "messages";
+  const { error } = await supabaseClient.from(table)
+    .update({ body, edited_at: new Date().toISOString() })
+    .eq("id", message.id);
+  if (error) return showToast(error.message, "error");
+  showToast("Message edited.");
+  await loadWorkspace(false);
+}
+
+async function deleteMessage(message) {
+  if (!window.confirm("Delete this message permanently?")) return;
+  const isDirect = Boolean(message.sender_id);
+  const table = isDirect ? "direct_messages" : "messages";
+  const paths = (Array.isArray(message.attachments) ? message.attachments : [])
+    .map((attachment) => attachment.path)
+    .filter(Boolean);
+
+  if (paths.length) {
+    const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).remove(paths);
+    if (storageError) return showToast(`Attachment could not be deleted: ${storageError.message}`, "error");
+    paths.forEach((path) => {
+      const url = state.attachmentUrls.get(path);
+      if (url) URL.revokeObjectURL(url);
+      state.attachmentUrls.delete(path);
+    });
+  }
+
+  const { error } = await supabaseClient.from(table).delete().eq("id", message.id);
+  if (error) return showToast(error.message, "error");
+  showToast("Message deleted.");
+  await loadWorkspace(false);
 }
 
 async function hydrateAttachment(holder, attachment) {
@@ -540,7 +736,8 @@ function removePendingFile(id) {
 
 async function sendMessage() {
   const body = $("#message-input").value.trim();
-  if ((!body && !state.pendingFiles.length) || !state.selectedChannelId || state.busy) return;
+  const hasConversation = Boolean(state.selectedChannelId || state.selectedDirectUserId);
+  if ((!body && !state.pendingFiles.length) || !hasConversation || state.busy) return;
   state.busy = true;
   updateSendState();
   const button = $("#send-message");
@@ -550,7 +747,10 @@ async function sendMessage() {
     const attachments = [];
     for (const { file } of state.pendingFiles) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "file";
-      const path = `${currentSession.user.id}/${makeId()}-${safeName}`;
+      const folder = state.selectedDirectUserId
+        ? `${currentSession.user.id}/dm/${state.selectedDirectUserId}`
+        : currentSession.user.id;
+      const path = `${folder}/${makeId()}-${safeName}`;
       const { error } = await supabaseClient.storage.from(STORAGE_BUCKET).upload(path, file, {
         contentType: file.type || "application/octet-stream",
         upsert: false,
@@ -562,12 +762,19 @@ async function sendMessage() {
       });
     }
 
-    const { error } = await supabaseClient.from("messages").insert({
-      channel_id: state.selectedChannelId,
-      author_id: currentSession.user.id,
-      body,
-      attachments,
-    });
+    const { error } = state.selectedDirectUserId
+      ? await supabaseClient.from("direct_messages").insert({
+        sender_id: currentSession.user.id,
+        recipient_id: state.selectedDirectUserId,
+        body,
+        attachments,
+      })
+      : await supabaseClient.from("messages").insert({
+        channel_id: state.selectedChannelId,
+        author_id: currentSession.user.id,
+        body,
+        attachments,
+      });
     if (error) throw error;
 
     $("#message-input").value = "";
@@ -680,6 +887,14 @@ function renderMembers() {
     role.className = `role-pill ${member.role}`;
     role.textContent = titleCase(member.role);
     row.append(avatar, copy, role);
+    if (member.id !== currentSession.user.id) {
+      const messageButton = document.createElement("button");
+      messageButton.type = "button";
+      messageButton.className = "message-member-button";
+      messageButton.textContent = "Message";
+      messageButton.addEventListener("click", () => selectDirectMessage(member.id));
+      row.append(messageButton);
+    }
     container.append(row);
   });
 }
@@ -757,6 +972,101 @@ async function copyTemporaryPassword() {
   showToast("Temporary password copied.", "success");
 }
 
+function openCrm() {
+  if (currentProfile?.role !== "admin") return showToast("The mini CRM is for administrators.", "error");
+  renderCrm();
+  openModal("crm-modal");
+}
+
+function renderCrm() {
+  if (!currentProfile || currentProfile.role !== "admin") return;
+  $("#crm-employee-count").textContent = state.members.length;
+  $("#crm-client-count").textContent = state.clients.length;
+
+  const employees = $("#crm-employees");
+  employees.replaceChildren();
+  state.members.forEach((member) => {
+    const row = document.createElement("div");
+    row.className = "crm-row";
+    const avatar = document.createElement("span");
+    avatar.className = `avatar small ${avatarClass(member.id)}`;
+    avatar.textContent = getInitials(member.display_name || member.email);
+    const copy = document.createElement("span");
+    copy.className = "crm-row-copy";
+    const name = document.createElement("strong");
+    name.textContent = member.display_name || member.email.split("@")[0];
+    const detail = document.createElement("small");
+    detail.textContent = member.email;
+    copy.append(name, detail);
+    const role = document.createElement("span");
+    role.className = `role-pill ${member.role}`;
+    role.textContent = titleCase(member.role);
+    row.append(avatar, copy, role);
+    employees.append(row);
+  });
+
+  const clients = $("#crm-clients");
+  clients.replaceChildren();
+  if (!state.clients.length) {
+    clients.innerHTML = '<div class="crm-empty">No clients yet. Use Add client to create the first record.</div>';
+    return;
+  }
+  state.clients.forEach((client) => {
+    const row = document.createElement("div");
+    row.className = "crm-row";
+    row.title = client.notes || "";
+    const avatar = document.createElement("span");
+    avatar.className = "avatar small avatar-mint";
+    avatar.textContent = getInitials(client.company || client.name);
+    const copy = document.createElement("span");
+    copy.className = "crm-row-copy";
+    const name = document.createElement("strong");
+    name.textContent = client.name;
+    const detail = document.createElement("small");
+    detail.textContent = [client.company, client.email, client.phone].filter(Boolean).join(" - ") || "No contact details yet";
+    copy.append(name, detail);
+    const status = document.createElement("span");
+    status.className = `crm-status ${client.status}`;
+    status.textContent = client.status.replace("-", " ");
+    row.append(avatar, copy, status);
+    clients.append(row);
+  });
+}
+
+function openClientForm() {
+  if (currentProfile?.role !== "admin") return;
+  $("#client-form").reset();
+  hideError("client-error");
+  closeModal("crm-modal");
+  openModal("client-form-modal");
+  $("#client-name").focus();
+}
+
+async function createClient(event) {
+  event.preventDefault();
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  const button = $("#client-submit");
+  hideError("client-error");
+  setButtonBusy(button, true, "Saving client...");
+
+  const { error } = await supabaseClient.from("crm_clients").insert({
+    name: $("#client-name").value.trim(),
+    company: $("#client-company").value.trim(),
+    email: $("#client-email").value.trim().toLowerCase() || null,
+    phone: $("#client-phone").value.trim(),
+    status: $("#client-status").value,
+    notes: $("#client-notes").value.trim(),
+    created_by: currentSession.user.id,
+  });
+
+  setButtonBusy(button, false, "Save client");
+  if (error) return showFormError("client-error", error.message);
+  closeModal("client-form-modal");
+  await loadWorkspace(false);
+  openCrm();
+  showToast("Client added to the CRM.", "success");
+}
+
 function openSearch() {
   openModal("search-modal");
   $("#search-input").value = "";
@@ -801,10 +1111,20 @@ function renderSearchResults() {
 function subscribeRealtime() {
   unsubscribeRealtime();
   state.realtime = supabaseClient.channel("vine-connect-live")
-    .on("postgres_changes", { event: "*", schema: "public", table: "channels" }, scheduleReload)
-    .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, scheduleReload)
-    .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "channels" }, () => scheduleReload(false))
+    .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => handleMessageChange(payload, "channel"))
+    .on("postgres_changes", { event: "*", schema: "public", table: "direct_messages" }, (payload) => handleMessageChange(payload, "direct"))
+    .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => scheduleReload(false))
+    .on("postgres_changes", { event: "*", schema: "public", table: "crm_clients" }, () => scheduleReload(false))
     .subscribe();
+}
+
+function handleMessageChange(payload, type) {
+  if (payload.eventType === "INSERT") {
+    handleIncomingMessage(payload.new, type);
+    return;
+  }
+  scheduleReload(false);
 }
 
 function unsubscribeRealtime() {
@@ -812,9 +1132,90 @@ function unsubscribeRealtime() {
   state.realtime = null;
 }
 
-function scheduleReload() {
+function handleIncomingMessage(message, type) {
+  const senderId = type === "channel" ? message.author_id : message.sender_id;
+  const isOwn = senderId === currentSession?.user.id;
+  const active = type === "channel"
+    ? !state.selectedDirectUserId && state.selectedChannelId === message.channel_id
+    : state.selectedDirectUserId === (message.sender_id === currentSession?.user.id ? message.recipient_id : message.sender_id);
+  if (active) {
+    const conversationId = type === "channel"
+      ? message.channel_id
+      : (message.sender_id === currentSession?.user.id ? message.recipient_id : message.sender_id);
+    markConversationRead(type === "channel" ? "channel" : "direct", conversationId);
+  }
+  if (!isOwn) playNotificationSound();
+  scheduleReload(active);
+}
+
+function scheduleReload(scrollToBottom = false) {
   window.clearTimeout(state.reloadTimer);
-  state.reloadTimer = window.setTimeout(() => loadWorkspace(true), 250);
+  state.reloadTimer = window.setTimeout(() => loadWorkspace(scrollToBottom), 250);
+}
+
+function loadViewState() {
+  try {
+    const saved = localStorage.getItem(`vine-connect-last-viewed:${currentSession.user.id}`);
+    state.lastViewed = saved ? JSON.parse(saved) : {};
+    state.viewStateInitialized = Boolean(saved);
+  } catch (_error) {
+    state.lastViewed = {};
+    state.viewStateInitialized = false;
+  }
+}
+
+function initializeViewState() {
+  if (state.viewStateInitialized || !currentSession) return;
+  const now = new Date().toISOString();
+  state.channels.forEach((channel) => { state.lastViewed[`channel:${channel.id}`] = now; });
+  state.members.filter((member) => member.id !== currentSession.user.id).forEach((member) => {
+    state.lastViewed[`direct:${member.id}`] = now;
+  });
+  state.viewStateInitialized = true;
+  saveViewState();
+}
+
+function markConversationRead(type, id) {
+  if (!id || !currentSession) return;
+  state.lastViewed[`${type}:${id}`] = new Date().toISOString();
+  saveViewState();
+}
+
+function saveViewState() {
+  if (!currentSession) return;
+  localStorage.setItem(`vine-connect-last-viewed:${currentSession.user.id}`, JSON.stringify(state.lastViewed));
+}
+
+function isChannelUnread(channelId) {
+  const viewedAt = state.lastViewed[`channel:${channelId}`] || "1970-01-01T00:00:00.000Z";
+  return state.messages.some((message) => message.channel_id === channelId
+    && message.author_id !== currentSession?.user.id
+    && new Date(message.created_at) > new Date(viewedAt));
+}
+
+function isDirectUnread(memberId) {
+  const viewedAt = state.lastViewed[`direct:${memberId}`] || "1970-01-01T00:00:00.000Z";
+  return state.directMessages.some((message) => message.sender_id === memberId
+    && message.recipient_id === currentSession?.user.id
+    && new Date(message.created_at) > new Date(viewedAt));
+}
+
+function unlockNotificationAudio() {
+  const previousVolume = notificationAudio.volume;
+  notificationAudio.volume = 0;
+  notificationAudio.play().then(() => {
+    notificationAudio.pause();
+    notificationAudio.currentTime = 0;
+    notificationAudio.volume = previousVolume;
+  }).catch(() => { notificationAudio.volume = previousVolume; });
+}
+
+function playNotificationSound() {
+  notificationAudio.currentTime = 0;
+  notificationAudio.volume = 0.85;
+  notificationAudio.play().catch(() => {
+    // Browsers can block sound until the member interacts with the page once.
+  });
 }
 
 async function signOut() {
@@ -846,7 +1247,8 @@ function closeSidebar() {
 
 function updateSendState() {
   const hasContent = Boolean($("#message-input")?.value.trim() || state.pendingFiles.length);
-  $("#send-message").disabled = !hasContent || !state.selectedChannelId || state.busy;
+  const hasConversation = Boolean(state.selectedChannelId || state.selectedDirectUserId);
+  $("#send-message").disabled = !hasContent || !hasConversation || state.busy;
 }
 
 function applySavedTheme() {

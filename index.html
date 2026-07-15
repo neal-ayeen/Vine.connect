@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#08271d">
   <meta name="description" content="Vine Connect by Vine Solutions - secure company chat.">
   <title>Vine Connect | Vine Solutions</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260716-2">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script src="supabase-config.js" defer></script>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20260716-2" defer></script>
 </head>
 <body>
   <section class="auth-screen" id="auth-screen">
@@ -68,6 +68,7 @@
         <button class="side-link" type="button"><i class="glyph">&#9676;</i><span>Threads</span></button>
         <button class="side-link" type="button"><i class="glyph">@</i><span>Mentions</span></button>
         <button class="side-link" type="button"><i class="glyph">&#9734;</i><span>Starred</span></button>
+        <button class="side-link" id="open-crm" type="button" hidden><i class="glyph">&#9638;</i><span>Mini CRM</span><span class="admin-tag">Admin</span></button>
         <p class="local-mode-note"><strong>Secure workspace</strong><br>Messages and private files are stored in your Supabase project.</p>
         <div class="channel-section">
           <div class="section-heading">
@@ -75,6 +76,10 @@
             <button id="open-channel-modal" type="button" aria-label="Create a channel" title="Admins only" hidden><i class="glyph glyph-button">+</i></button>
           </div>
           <div id="channel-list"></div>
+        </div>
+        <div class="direct-section">
+          <div class="section-heading"><span>Direct messages</span></div>
+          <div id="direct-list"></div>
         </div>
       </nav>
       <div class="sidebar-footer">
@@ -91,7 +96,7 @@
       <header class="channel-header">
         <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open sidebar"><i class="glyph">&#9776;</i></button>
         <div class="channel-identity">
-          <div class="channel-title-line"><i class="glyph">#</i><h1 id="channel-name">general</h1></div>
+          <div class="channel-title-line"><i class="glyph" id="conversation-symbol">#</i><h1 id="channel-name">general</h1></div>
           <p id="channel-description"></p>
         </div>
         <div class="header-actions">
@@ -205,6 +210,54 @@
         <div class="credential-password-row"><input id="created-member-password" readonly><button id="copy-member-password" type="button">Copy</button></div>
       </div>
       <button class="primary-button" id="finish-member-created" type="button">Done</button>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="crm-modal" role="presentation" hidden>
+    <div class="modal crm-modal" role="dialog" aria-modal="true" aria-labelledby="crm-title">
+      <button class="modal-close" data-close="crm-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="crm-title-row">
+        <div><span class="eyebrow">Admin workspace</span><h2 id="crm-title">Vine mini CRM</h2><p>Employees and client relationships in one view.</p></div>
+        <button class="primary-button compact-button" id="open-client-form" type="button">+ Add client</button>
+      </div>
+      <div class="crm-grid">
+        <section class="crm-panel">
+          <div class="crm-panel-head"><h3>Employees</h3><span id="crm-employee-count">0</span></div>
+          <div class="crm-list" id="crm-employees"></div>
+        </section>
+        <section class="crm-panel">
+          <div class="crm-panel-head"><h3>Clients</h3><span id="crm-client-count">0</span></div>
+          <div class="crm-list" id="crm-clients"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="client-form-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="client-form-title">
+      <button class="modal-close" data-close="client-form-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#9638;</i></div>
+      <h2 id="client-form-title">Add a client</h2>
+      <p>Save the main contact and current relationship status.</p>
+      <form id="client-form">
+        <label>Client or contact name<input id="client-name" maxlength="100" required></label>
+        <label>Company <span>Optional</span><input id="client-company" maxlength="120"></label>
+        <div class="form-pair">
+          <label>Email <span>Optional</span><input id="client-email" type="email" maxlength="254"></label>
+          <label>Phone <span>Optional</span><input id="client-phone" type="tel" maxlength="40"></label>
+        </div>
+        <label>Status
+          <select id="client-status">
+            <option value="lead">Lead</option>
+            <option value="active">Active client</option>
+            <option value="on-hold">On hold</option>
+            <option value="closed">Closed</option>
+          </select>
+        </label>
+        <label>Notes <span>Optional</span><textarea id="client-notes" rows="3" maxlength="1000"></textarea></label>
+        <p class="form-error" id="client-error" role="alert" hidden></p>
+        <button class="primary-button" id="client-submit" type="submit">Save client</button>
+      </form>
     </div>
   </div>
 
