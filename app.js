@@ -10,10 +10,14 @@ const state = {
   directMessages: [],
   threadReplies: [],
   pins: [],
+  fileItems: [],
+  filesFeatureReady: false,
   members: [],
   clients: [],
   selectedChannelId: null,
   selectedDirectUserId: null,
+  selectedFileFolderId: null,
+  libraryUploadContext: null,
   activeThread: null,
   composerTarget: "message-input",
   expanded: new Set(),
@@ -77,6 +81,7 @@ function bindEvents() {
   $("#login-form").addEventListener("submit", login);
   $("#password-form").addEventListener("submit", changeTemporaryPassword);
   $("#channel-form").addEventListener("submit", createChannel);
+  $("#new-channel-type").addEventListener("change", updateChannelTypeTip);
   $("#profile-form").addEventListener("submit", updateProfile);
   $("#message-input").addEventListener("input", updateSendState);
   $("#message-input").addEventListener("focus", () => { state.composerTarget = "message-input"; });
@@ -94,6 +99,7 @@ function bindEvents() {
   $("#format-emoji").addEventListener("click", () => openEmojiPicker("message-input"));
   $("#attach-files").addEventListener("click", () => $("#file-input").click());
   $("#file-input").addEventListener("change", (event) => queueFiles(event.target.files));
+  $("#library-file-input").addEventListener("change", (event) => uploadLibraryFiles(event.target.files));
   $("#focus-composer").addEventListener("click", () => $("#message-input").focus());
   $("#open-channel-modal").addEventListener("click", openChannelModal);
   $("#open-profile").addEventListener("click", openProfileModal);
@@ -199,9 +205,12 @@ async function syncSession(session) {
     state.directMessages = [];
     state.threadReplies = [];
     state.pins = [];
+    state.fileItems = [];
+    state.filesFeatureReady = false;
     state.members = [];
     state.clients = [];
     state.selectedDirectUserId = null;
+    state.selectedFileFolderId = null;
     state.activeThread = null;
     state.lastViewed = {};
     state.viewStateInitialized = false;
@@ -272,14 +281,17 @@ async function loadWorkspace(scrollToBottom = false) {
   const clientsRequest = currentProfile?.role === "admin"
     ? supabaseClient.from("crm_clients").select("id,name,company,email,phone,status,notes,created_at,updated_at").order("updated_at", { ascending: false })
     : Promise.resolve({ data: [], error: null });
-  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult] = await Promise.all([
-    supabaseClient.from("channels").select("id,name,description,parent_id,created_at").order("created_at", { ascending: true }),
+  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult, fileItemsResult] = await Promise.all([
+    supabaseClient.from("channels").select("*").order("created_at", { ascending: true }),
     supabaseClient.from("messages").select("id,channel_id,author_id,body,attachments,created_at,edited_at,author:profiles!messages_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(1000),
     supabaseClient.from("direct_messages").select("id,sender_id,recipient_id,body,attachments,created_at,edited_at").order("created_at", { ascending: true }).limit(1000),
     supabaseClient.from("thread_replies").select("id,channel_message_id,direct_message_id,author_id,body,created_at,edited_at,author:profiles!thread_replies_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(2000),
     supabaseClient.from("message_pins").select("id,message_id,channel_id,pinned_by,created_at").order("created_at", { ascending: false }),
     supabaseClient.from("profiles").select("id,email,display_name,role,job_title").order("display_name", { ascending: true }),
     clientsRequest,
+    supabaseClient.from("file_library_items")
+      .select("id,channel_id,parent_id,name,item_type,storage_path,external_url,mime_type,size_bytes,uploaded_by,created_at,updated_at")
+      .order("created_at", { ascending: true }),
   ]);
 
   const firstError = channelsResult.error || messagesResult.error || directResult.error || threadResult.error || pinsResult.error || membersResult.error || clientsResult.error;
@@ -289,11 +301,13 @@ async function loadWorkspace(scrollToBottom = false) {
     return;
   }
 
-  state.channels = channelsResult.data || [];
+  state.channels = (channelsResult.data || []).map((channel) => ({ ...channel, channel_type: channel.channel_type || "chat" }));
   state.messages = messagesResult.data || [];
   state.directMessages = directResult.data || [];
   state.threadReplies = threadResult.data || [];
   state.pins = pinsResult.data || [];
+  state.fileItems = fileItemsResult.error ? [] : (fileItemsResult.data || []);
+  state.filesFeatureReady = !fileItemsResult.error;
   state.members = membersResult.data || [];
   state.clients = clientsResult.data || [];
 
@@ -307,6 +321,16 @@ async function loadWorkspace(scrollToBottom = false) {
     state.selectedChannelId = state.channels.some((channel) => channel.id === savedChannel)
       ? savedChannel
       : (state.channels.find((channel) => channel.name === "general") || state.channels[0])?.id || null;
+  }
+
+  const deepLink = new URLSearchParams(window.location.search);
+  const requestedChannel = deepLink.get("channel");
+  if (!state.selectedDirectUserId && requestedChannel && state.channels.some((channel) => channel.id === requestedChannel)) {
+    state.selectedChannelId = requestedChannel;
+    const requestedFolder = deepLink.get("folder");
+    state.selectedFileFolderId = state.fileItems.some((item) => item.id === requestedFolder && item.channel_id === requestedChannel && item.item_type === "folder")
+      ? requestedFolder
+      : null;
   }
 
   initializeViewState();
@@ -384,7 +408,7 @@ function renderChannels() {
         button.type = "button";
         const childUnread = isChannelUnread(child.id);
         button.className = `subchannel${child.id === state.selectedChannelId && !state.selectedDirectUserId ? " active" : ""}${childUnread ? " unread" : ""}`;
-        button.innerHTML = '<span class="sub-line"></span><i class="glyph">#</i>';
+        button.innerHTML = `<span class="sub-line"></span><i class="glyph">${child.channel_type === "files" ? "&#128193;" : "#"}</i>`;
         const name = document.createElement("span");
         name.textContent = child.name;
         button.append(name);
@@ -405,7 +429,7 @@ function channelButton(channel, unread = false) {
   const button = document.createElement("button");
   button.className = "channel-button";
   button.type = "button";
-  button.innerHTML = '<i class="glyph">#</i>';
+  button.innerHTML = `<i class="glyph">${channel.channel_type === "files" ? "&#128193;" : "#"}</i>`;
   const name = document.createElement("span");
   name.textContent = channel.name;
   button.append(name);
@@ -418,7 +442,7 @@ function channelDeleteButton(channel) {
   const button = document.createElement("button");
   button.className = "channel-delete-button";
   button.type = "button";
-  button.title = `Delete #${channel.name}`;
+  button.title = `Delete ${channel.channel_type === "files" ? "files library" : "channel"} ${channel.name}`;
   button.setAttribute("aria-label", `Delete channel ${channel.name}`);
   button.textContent = "\u00D7";
   button.addEventListener("click", (event) => {
@@ -431,9 +455,10 @@ function channelDeleteButton(channel) {
 async function deleteChannel(channel) {
   if (currentProfile?.role !== "admin" || state.busy) return;
   const childCount = state.channels.filter((item) => item.parent_id === channel.id).length;
+  const channelLabel = channel.channel_type === "files" ? `the ${channel.name} files library` : `#${channel.name}`;
   const warning = childCount
-    ? `Delete #${channel.name}, its ${childCount} sub-channel${childCount === 1 ? "" : "s"}, and all of their messages?`
-    : `Delete #${channel.name} and all of its messages?`;
+    ? `Delete ${channelLabel}, its ${childCount} sub-channel${childCount === 1 ? "" : "s"}, and all associated content?`
+    : `Delete ${channelLabel} and all of its content?`;
   if (!window.confirm(`${warning}\n\nThis cannot be undone.`)) return;
   const channelIds = getChannelDescendantIds(channel.id);
   const attachmentPaths = state.messages
@@ -441,11 +466,16 @@ async function deleteChannel(channel) {
     .flatMap((message) => Array.isArray(message.attachments) ? message.attachments : [])
     .map((attachment) => attachment.path)
     .filter(Boolean);
+  const libraryPaths = state.fileItems
+    .filter((item) => channelIds.has(item.channel_id))
+    .map((item) => item.storage_path)
+    .filter(Boolean);
   state.busy = true;
   const { error } = await supabaseClient.rpc("delete_vine_channel", { target_channel_id: channel.id });
   let storageWarning = "";
-  if (!error && attachmentPaths.length) {
-    const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).remove(attachmentPaths);
+  const storedPaths = [...attachmentPaths, ...libraryPaths];
+  if (!error && storedPaths.length) {
+    const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).remove(storedPaths);
     if (storageError) storageWarning = " Some old attachment files could not be cleared from storage.";
   }
   state.busy = false;
@@ -473,8 +503,10 @@ function getChannelDescendantIds(channelId) {
 }
 
 function selectChannel(id) {
+  if (state.selectedChannelId !== id) state.selectedFileFolderId = null;
   state.selectedChannelId = id;
   state.selectedDirectUserId = null;
+  clearFileLibraryDeepLink();
   localStorage.setItem("vine-connect-channel", id);
   const channel = state.channels.find((item) => item.id === id);
   if (channel?.parent_id) state.expanded.add(channel.parent_id);
@@ -510,6 +542,8 @@ function selectDirectMessage(memberId) {
   if (memberId === currentSession?.user.id) return;
   state.selectedDirectUserId = memberId;
   state.selectedChannelId = null;
+  state.selectedFileFolderId = null;
+  clearFileLibraryDeepLink();
   markConversationRead("direct", memberId);
   renderChannels();
   renderDirectMessages();
@@ -528,6 +562,7 @@ function unreadDot() {
 function renderConversation(scrollToBottom = false) {
   $("#open-meeting").hidden = !(state.selectedChannelId || state.selectedDirectUserId);
   if (state.selectedDirectUserId) {
+    $("#composer-wrap").hidden = false;
     const member = state.members.find((item) => item.id === state.selectedDirectUserId);
     if (!member) {
       state.selectedDirectUserId = null;
@@ -563,6 +598,7 @@ function renderConversation(scrollToBottom = false) {
 
   const channel = state.channels.find((item) => item.id === state.selectedChannelId);
   if (!channel) {
+    $("#composer-wrap").hidden = false;
     $("#conversation-symbol").textContent = "#";
     $("#channel-name").textContent = "Vine Connect";
     $("#channel-description").textContent = "Your workspace has no channels yet.";
@@ -575,6 +611,12 @@ function renderConversation(scrollToBottom = false) {
     return;
   }
 
+  if (channel.channel_type === "files") {
+    renderFileLibrary(channel);
+    return;
+  }
+
+  $("#composer-wrap").hidden = false;
   $("#message-input").disabled = false;
   $("#conversation-symbol").textContent = "#";
   $("#channel-name").textContent = channel.name;
@@ -597,6 +639,350 @@ function renderConversation(scrollToBottom = false) {
 
   if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
   updateSendState();
+}
+
+function renderFileLibrary(channel) {
+  const channelItems = state.fileItems.filter((item) => item.channel_id === channel.id);
+  const currentFolder = channelItems.find((item) => item.id === state.selectedFileFolderId && item.item_type === "folder") || null;
+  if (state.selectedFileFolderId && !currentFolder) state.selectedFileFolderId = null;
+
+  $("#composer-wrap").hidden = true;
+  $("#open-meeting").hidden = true;
+  $("#open-pins").hidden = true;
+  $("#conversation-symbol").textContent = "\uD83D\uDCC1";
+  $("#channel-name").textContent = channel.name;
+  $("#channel-description").textContent = channel.description || "Shared files for this channel";
+
+  const pane = $("#message-pane");
+  pane.replaceChildren();
+  const library = document.createElement("section");
+  library.className = "file-library";
+
+  const heading = document.createElement("div");
+  heading.className = "file-library-heading";
+  const title = document.createElement("div");
+  title.className = "file-library-title";
+  const eyebrow = document.createElement("span");
+  eyebrow.textContent = "FILES LIBRARY";
+  const headingText = document.createElement("h2");
+  headingText.textContent = currentFolder?.name || channel.name;
+  const description = document.createElement("p");
+  description.textContent = "Documents are kept in this channel's dedicated Supabase storage folder.";
+  title.append(eyebrow, headingText, description);
+
+  const actions = document.createElement("div");
+  actions.className = "file-library-actions";
+  const newFolderButton = document.createElement("button");
+  newFolderButton.type = "button";
+  newFolderButton.className = "secondary-button compact-button";
+  newFolderButton.textContent = "+ New folder";
+  newFolderButton.disabled = !state.filesFeatureReady;
+  newFolderButton.addEventListener("click", () => createLibraryFolder(channel));
+  const uploadButton = document.createElement("button");
+  uploadButton.type = "button";
+  uploadButton.className = "primary-button compact-button";
+  uploadButton.textContent = "\u2191 Upload files";
+  uploadButton.disabled = !state.filesFeatureReady || state.busy;
+  uploadButton.addEventListener("click", () => beginLibraryUpload(channel));
+  actions.append(newFolderButton, uploadButton);
+  heading.append(title, actions);
+  library.append(heading);
+
+  const breadcrumbs = document.createElement("nav");
+  breadcrumbs.className = "file-breadcrumbs";
+  breadcrumbs.setAttribute("aria-label", "File library folder path");
+  const rootButton = document.createElement("button");
+  rootButton.type = "button";
+  rootButton.textContent = channel.name;
+  rootButton.addEventListener("click", () => browseLibraryFolder(null));
+  breadcrumbs.append(rootButton);
+  getLibraryAncestors(currentFolder, channelItems).forEach((folder) => {
+    const divider = document.createElement("span");
+    divider.textContent = "/";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = folder.name;
+    button.addEventListener("click", () => browseLibraryFolder(folder.id));
+    breadcrumbs.append(divider, button);
+  });
+  library.append(breadcrumbs);
+
+  if (!state.filesFeatureReady) {
+    const setup = document.createElement("div");
+    setup.className = "file-library-setup";
+    setup.innerHTML = '<strong>One Supabase update is required</strong><span>Run <code>vine-connect-files-update.sql</code> in the Supabase SQL Editor before creating a Files channel.</span>';
+    library.append(setup);
+    pane.append(library);
+    renderChannels();
+    renderDirectMessages();
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "file-library-list";
+  const currentItems = channelItems
+    .filter((item) => (item.parent_id || null) === (state.selectedFileFolderId || null))
+    .sort((a, b) => Number(b.item_type === "folder") - Number(a.item_type === "folder") || a.name.localeCompare(b.name));
+
+  if (!currentItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "file-library-empty";
+    empty.innerHTML = '<span>\uD83D\uDCC2</span><strong>This folder is empty</strong><p>Upload documents or create a folder to organize this library.</p>';
+    list.append(empty);
+  } else {
+    const columns = document.createElement("div");
+    columns.className = "file-library-columns";
+    columns.innerHTML = "<span>Name</span><span>Added by</span><span>Modified</span><span>Size</span><span></span>";
+    list.append(columns);
+    currentItems.forEach((item) => list.append(renderLibraryItem(channel, item)));
+  }
+
+  library.append(list);
+  pane.append(library);
+  markConversationRead("channel", channel.id);
+  renderChannels();
+  renderDirectMessages();
+}
+
+function renderLibraryItem(channel, item) {
+  const row = document.createElement("div");
+  row.className = "file-library-row";
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "file-item-open";
+  open.title = `Open ${item.name} in a new tab`;
+  const icon = document.createElement("span");
+  icon.className = `file-type-icon ${item.item_type}`;
+  icon.textContent = item.item_type === "folder" ? "\uD83D\uDCC1" : fileTypeLabel(item);
+  const name = document.createElement("span");
+  name.className = "file-item-name";
+  name.textContent = item.name;
+  const external = document.createElement("span");
+  external.className = "new-tab-mark";
+  external.textContent = "\u2197";
+  open.append(icon, name, external);
+  open.addEventListener("click", () => openLibraryItem(channel, item));
+
+  const owner = document.createElement("span");
+  owner.className = "file-item-meta";
+  const uploader = state.members.find((member) => member.id === item.uploaded_by);
+  owner.textContent = uploader?.display_name || uploader?.email?.split("@")[0] || "Vine member";
+  const modified = document.createElement("span");
+  modified.className = "file-item-meta";
+  modified.textContent = formatDateLabel(item.updated_at || item.created_at);
+  const size = document.createElement("span");
+  size.className = "file-item-meta";
+  size.textContent = item.item_type === "folder" ? "Folder" : formatBytes(item.size_bytes || 0);
+  const controls = document.createElement("span");
+  controls.className = "file-item-controls";
+  const canDelete = currentProfile?.role === "admin" || (item.item_type !== "folder" && item.uploaded_by === currentSession?.user.id);
+  if (canDelete) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.title = `Delete ${item.name}`;
+    remove.setAttribute("aria-label", `Delete ${item.name}`);
+    remove.textContent = "\u00D7";
+    remove.addEventListener("click", () => deleteLibraryItem(channel, item));
+    controls.append(remove);
+  }
+  row.append(open, owner, modified, size, controls);
+  return row;
+}
+
+function getLibraryAncestors(folder, items) {
+  if (!folder) return [];
+  const ancestors = [];
+  let current = folder;
+  const seen = new Set();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    ancestors.unshift(current);
+    current = items.find((item) => item.id === current.parent_id && item.item_type === "folder") || null;
+  }
+  return ancestors;
+}
+
+function browseLibraryFolder(folderId) {
+  state.selectedFileFolderId = folderId || null;
+  const url = new URL(window.location.href);
+  url.searchParams.set("channel", state.selectedChannelId);
+  if (state.selectedFileFolderId) url.searchParams.set("folder", state.selectedFileFolderId);
+  else url.searchParams.delete("folder");
+  replaceCurrentUrl(url);
+  renderConversation(false);
+}
+
+function clearFileLibraryDeepLink() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("channel") && !url.searchParams.has("folder")) return;
+  url.searchParams.delete("channel");
+  url.searchParams.delete("folder");
+  replaceCurrentUrl(url);
+}
+
+function replaceCurrentUrl(url) {
+  try {
+    window.history.replaceState(null, "", url);
+  } catch (_error) {
+    // Some browsers restrict history changes when previewing the app from file://.
+  }
+}
+
+function beginLibraryUpload(channel) {
+  if (!state.filesFeatureReady || state.busy) return;
+  state.libraryUploadContext = { channelId: channel.id, parentId: state.selectedFileFolderId || null };
+  $("#library-file-input").click();
+}
+
+async function uploadLibraryFiles(fileList) {
+  const input = $("#library-file-input");
+  const files = [...(fileList || [])];
+  const context = state.libraryUploadContext;
+  input.value = "";
+  if (!files.length || !context || !state.filesFeatureReady || state.busy) return;
+  const channel = state.channels.find((item) => item.id === context.channelId && item.channel_type === "files");
+  if (!channel) return showToast("This Files channel is no longer available.", "error");
+  const oversized = files.find((file) => file.size > MAX_FILE_BYTES);
+  if (oversized) return showToast(`${oversized.name} is larger than the 30 MB per-file limit.`, "error");
+
+  const existingNames = new Set(state.fileItems
+    .filter((item) => item.channel_id === channel.id && (item.parent_id || null) === context.parentId)
+    .map((item) => item.name.toLowerCase()));
+  const duplicate = files.find((file) => existingNames.has(file.name.toLowerCase()));
+  if (duplicate) return showToast(`${duplicate.name} already exists in this folder.`, "error");
+
+  state.busy = true;
+  renderConversation(false);
+  let uploaded = 0;
+  try {
+    for (const file of files) {
+      const itemId = makeId();
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "file";
+      const path = `${currentSession.user.id}/libraries/${channel.id}/${itemId}-${safeName}`;
+      const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).upload(path, file, {
+        contentType: file.type || "application/octet-stream",
+        upsert: false,
+      });
+      if (storageError) throw storageError;
+
+      const { error: metadataError } = await supabaseClient.from("file_library_items").insert({
+        id: itemId,
+        channel_id: channel.id,
+        parent_id: context.parentId,
+        name: file.name,
+        item_type: "file",
+        storage_path: path,
+        mime_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        uploaded_by: currentSession.user.id,
+      });
+      if (metadataError) {
+        await supabaseClient.storage.from(STORAGE_BUCKET).remove([path]);
+        throw metadataError;
+      }
+      existingNames.add(file.name.toLowerCase());
+      uploaded += 1;
+    }
+    await loadWorkspace(false);
+    showToast(`${uploaded} file${uploaded === 1 ? "" : "s"} uploaded to ${channel.name}.`, "success");
+  } catch (error) {
+    await loadWorkspace(false);
+    showToast(error.message || "The files could not be uploaded.", "error");
+  } finally {
+    state.busy = false;
+    state.libraryUploadContext = null;
+    renderConversation(false);
+  }
+}
+
+async function createLibraryFolder(channel) {
+  if (!state.filesFeatureReady || state.busy) return;
+  const requested = window.prompt("Folder name");
+  if (requested === null) return;
+  const name = requested.trim().replace(/[\\/]+/g, "-").slice(0, 120);
+  if (!name) return showToast("Enter a folder name.", "error");
+  const duplicate = state.fileItems.some((item) => item.channel_id === channel.id
+    && (item.parent_id || null) === (state.selectedFileFolderId || null)
+    && item.name.toLowerCase() === name.toLowerCase());
+  if (duplicate) return showToast(`${name} already exists in this folder.`, "error");
+
+  state.busy = true;
+  const { error } = await supabaseClient.from("file_library_items").insert({
+    channel_id: channel.id,
+    parent_id: state.selectedFileFolderId || null,
+    name,
+    item_type: "folder",
+    uploaded_by: currentSession.user.id,
+  });
+  state.busy = false;
+  if (error) return showToast(error.message, "error");
+  await loadWorkspace(false);
+  showToast(`${name} folder created.`, "success");
+}
+
+async function openLibraryItem(channel, item) {
+  if (item.item_type === "folder") {
+    const url = new URL(window.location.href);
+    url.searchParams.set("channel", channel.id);
+    url.searchParams.set("folder", item.id);
+    window.open(url.href, "_blank", "noopener,noreferrer");
+    return;
+  }
+  if (item.item_type === "link" && item.external_url) {
+    window.open(item.external_url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const preview = window.open("about:blank", "_blank");
+  if (!preview) return showToast("Allow pop-ups for Vine Connect to open files in a new tab.", "error");
+  preview.opener = null;
+  preview.document.title = `Opening ${item.name}`;
+  preview.document.body.textContent = `Opening ${item.name}...`;
+  const { data, error } = await supabaseClient.storage.from(STORAGE_BUCKET).createSignedUrl(item.storage_path, 600);
+  if (error || !data?.signedUrl) {
+    preview.close();
+    return showToast(error?.message || "The file could not be opened.", "error");
+  }
+  preview.location.replace(data.signedUrl);
+}
+
+async function deleteLibraryItem(channel, item) {
+  if (state.busy) return;
+  const canDelete = currentProfile?.role === "admin" || (item.item_type !== "folder" && item.uploaded_by === currentSession?.user.id);
+  if (!canDelete) return showToast("Only an administrator can delete this folder.", "error");
+  if (!window.confirm(`Delete ${item.name}${item.item_type === "folder" ? " and everything inside it" : ""}?\n\nThis cannot be undone.`)) return;
+
+  const ids = new Set([item.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    state.fileItems.forEach((candidate) => {
+      if (candidate.channel_id === channel.id && candidate.parent_id && ids.has(candidate.parent_id) && !ids.has(candidate.id)) {
+        ids.add(candidate.id);
+        changed = true;
+      }
+    });
+  }
+  const paths = state.fileItems.filter((candidate) => ids.has(candidate.id)).map((candidate) => candidate.storage_path).filter(Boolean);
+  state.busy = true;
+  if (paths.length) {
+    const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).remove(paths);
+    if (storageError) {
+      state.busy = false;
+      return showToast(storageError.message, "error");
+    }
+  }
+  const { error } = await supabaseClient.from("file_library_items").delete().eq("id", item.id);
+  state.busy = false;
+  if (error) return showToast(error.message, "error");
+  if (ids.has(state.selectedFileFolderId)) state.selectedFileFolderId = null;
+  await loadWorkspace(false);
+  showToast(`${item.name} deleted.`, "success");
+}
+
+function fileTypeLabel(item) {
+  const extension = item.name.includes(".") ? item.name.split(".").pop().slice(0, 4).toUpperCase() : "FILE";
+  return extension || "FILE";
 }
 
 function getMeetingContext() {
@@ -1416,6 +1802,8 @@ async function sendMessage() {
 
 function openChannelModal() {
   if (currentProfile?.role !== "admin") return showToast("Only administrators can create channels.", "error");
+  $("#new-channel-type").value = "chat";
+  updateChannelTypeTip();
   const parentSelect = $("#new-channel-parent");
   parentSelect.innerHTML = '<option value="">No parent - top-level channel</option>';
   state.channels.filter((channel) => !channel.parent_id).forEach((channel) => {
@@ -1440,9 +1828,11 @@ async function createChannel(event) {
   hideError("channel-error");
 
   const parentId = $("#new-channel-parent").value || null;
+  const channelType = $("#new-channel-type").value === "files" ? "files" : "chat";
   const { data, error } = await supabaseClient.from("channels").insert({
     name,
     description: $("#new-channel-description").value.trim(),
+    channel_type: channelType,
     parent_id: parentId,
     created_by: currentSession.user.id,
   }).select("id").single();
@@ -1454,7 +1844,15 @@ async function createChannel(event) {
   state.selectedChannelId = data.id;
   if (parentId) state.expanded.add(parentId);
   await loadWorkspace(true);
-  showToast(`#${name} created.`, "success");
+  showToast(`${channelType === "files" ? `${name} Files library` : `#${name}`} created.`, "success");
+}
+
+function updateChannelTypeTip() {
+  const isFiles = $("#new-channel-type")?.value === "files";
+  const tip = $("#channel-type-tip");
+  if (tip) tip.textContent = isFiles
+    ? "A Files library has no chat composer. Members can upload and organize documents in its dedicated storage folder."
+    : "Chat channels contain messages, threads, pins, and meetings.";
 }
 
 function openProfileModal() {
@@ -1845,12 +2243,12 @@ function renderSearchResults() {
   matches.forEach((channel) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.innerHTML = '<span class="search-result-icon">#</span>';
+    button.innerHTML = `<span class="search-result-icon">${channel.channel_type === "files" ? "&#128193;" : "#"}</span>`;
     const copy = document.createElement("span");
     const name = document.createElement("strong");
     name.textContent = channel.name;
     const description = document.createElement("small");
-    description.textContent = channel.description || "Vine Solutions channel";
+    description.textContent = channel.description || (channel.channel_type === "files" ? "Shared files library" : "Vine Solutions channel");
     copy.append(name, description);
     const arrow = document.createElement("span");
     arrow.textContent = ">";
@@ -1865,15 +2263,29 @@ function renderSearchResults() {
 
 function subscribeRealtime() {
   unsubscribeRealtime();
-  state.realtime = supabaseClient.channel("vine-connect-live")
+  let realtime = supabaseClient.channel("vine-connect-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "channels" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, (payload) => handleMessageChange(payload, "channel"))
     .on("postgres_changes", { event: "*", schema: "public", table: "direct_messages" }, (payload) => handleMessageChange(payload, "direct"))
     .on("postgres_changes", { event: "*", schema: "public", table: "thread_replies" }, handleThreadReplyChange)
-    .on("postgres_changes", { event: "*", schema: "public", table: "message_pins" }, () => scheduleReload(false))
+    .on("postgres_changes", { event: "*", schema: "public", table: "message_pins" }, () => scheduleReload(false));
+  if (state.filesFeatureReady) {
+    realtime = realtime.on("postgres_changes", { event: "*", schema: "public", table: "file_library_items" }, handleFileLibraryChange);
+  }
+  state.realtime = realtime
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "crm_clients" }, () => scheduleReload(false))
     .subscribe();
+}
+
+function handleFileLibraryChange(payload) {
+  if (payload.eventType === "INSERT" && payload.new.uploaded_by !== currentSession?.user.id) {
+    playNotificationSound();
+    if (!state.selectedDirectUserId && state.selectedChannelId === payload.new.channel_id) {
+      markConversationRead("channel", payload.new.channel_id);
+    }
+  }
+  scheduleReload(false);
 }
 
 function handleThreadReplyChange(payload) {
@@ -1969,7 +2381,10 @@ function isChannelUnread(channelId) {
       && reply.author_id !== currentSession?.user.id
       && new Date(reply.created_at) > new Date(viewedAt);
   });
-  return unreadMessage || unreadReply;
+  const unreadFile = state.fileItems.some((item) => item.channel_id === channelId
+    && item.uploaded_by !== currentSession?.user.id
+    && new Date(item.created_at) > new Date(viewedAt));
+  return unreadMessage || unreadReply || unreadFile;
 }
 
 function isDirectUnread(memberId) {

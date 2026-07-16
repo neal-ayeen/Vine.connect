@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#08271d">
   <meta name="description" content="Vine Connect by Vine Solutions - secure company chat.">
   <title>Vine Connect | Vine Solutions</title>
-  <link rel="stylesheet" href="style.css?v=20260716-7">
+  <link rel="stylesheet" href="style.css?v=20260716-8">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.29.0/index.js"></script>
   <script type="module">
@@ -15,7 +15,7 @@
   </script>
   <script src="supabase-config.js" defer></script>
   <script src="https://meet.jit.si/external_api.js" defer></script>
-  <script src="app.js?v=20260716-8" defer></script>
+  <script src="app.js?v=20260716-9" defer></script>
 </head>
 <body>
   <section class="auth-screen" id="auth-screen">
@@ -138,6 +138,7 @@
         </div>
         <p class="composer-hint"><strong>Enter</strong> to send &middot; <strong>Shift + Enter</strong> for a new line &middot; 30 MB per file</p>
       </div>
+      <input class="visually-hidden" id="library-file-input" type="file" multiple>
     </section>
   </main>
 
@@ -146,14 +147,20 @@
       <button class="modal-close" data-close="channel-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
       <div class="modal-icon"><i class="glyph">&#10022;</i></div>
       <h2 id="create-channel-title">Create a channel</h2>
-      <p>Admin access is required. Give a project, team, or client its own focused place to talk.</p>
+      <p>Admin access is required. Create a conversation or a dedicated document library.</p>
       <form id="channel-form">
         <label>Channel name<input id="new-channel-name" autocomplete="off" placeholder="e.g. client-orbit" maxlength="48" required></label>
         <label>Description <span>Optional</span><input id="new-channel-description" placeholder="What is this channel for?" maxlength="160"></label>
+        <label>Channel type
+          <select id="new-channel-type" required>
+            <option value="chat">Chat channel</option>
+            <option value="files">Files library</option>
+          </select>
+        </label>
         <label>Place it under <span>Optional</span>
           <select id="new-channel-parent"><option value="">No parent - top-level channel</option></select>
         </label>
-        <div class="modal-tip"><i class="glyph folder-glyph">&#9635;</i><span>Choose a client channel above to create a sub-channel beneath it.</span></div>
+        <div class="modal-tip"><i class="glyph folder-glyph">&#9635;</i><span id="channel-type-tip">Chat channels contain messages, threads, pins, and meetings.</span></div>
         <p class="form-error" id="channel-error" role="alert" hidden></p>
         <button class="primary-button" id="channel-submit" type="submit">Create channel</button>
       </form>
