@@ -3,6 +3,7 @@
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 const MAX_VIDEO_SECONDS = 120;
 const STORAGE_BUCKET = "chat-files";
+const RING_DURATION_MS = 30 * 1000;
 
 const state = {
   channels: [],
@@ -13,6 +14,11 @@ const state = {
   reactionsReady: false,
   reactionTarget: null,
   reactionBusy: false,
+  memberRings: [],
+  ringsReady: false,
+  activeRing: null,
+  ringSendingTo: null,
+  handledRingIds: new Set(),
   pins: [],
   fileItems: [],
   filesFeatureReady: false,
@@ -41,8 +47,13 @@ let currentSession = null;
 let currentProfile = null;
 let jitsiApi = null;
 let toastTimer = null;
+let ringTimer = null;
+const defaultDocumentTitle = document.title;
 const notificationAudio = new Audio("notification.mp3?v=20260716-2");
 notificationAudio.preload = "auto";
+const ringAudio = new Audio("ringtone.mp3?v=20260717-1");
+ringAudio.preload = "auto";
+ringAudio.loop = true;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -126,6 +137,7 @@ function bindEvents() {
   $("#open-mentions").addEventListener("click", openMentionsOverview);
   $("#open-pins").addEventListener("click", openPinnedMessages);
   $("#open-meeting").addEventListener("click", openMeeting);
+  $("#open-ring-direct").addEventListener("click", () => sendMemberRing(state.selectedDirectUserId));
   $("#leave-meeting").addEventListener("click", closeMeeting);
   $("#open-pins-sidebar").addEventListener("click", openPinnedMessages);
   $("#thread-form").addEventListener("submit", sendThreadReply);
@@ -158,6 +170,8 @@ function bindEvents() {
   $("#sign-out").addEventListener("click", signOut);
   $("#sign-out-quick").addEventListener("click", signOut);
   $("#toggle-notifications").addEventListener("click", toggleNotifications);
+  $("#dismiss-ring").addEventListener("click", () => dismissActiveRing(false));
+  $("#open-ring-message").addEventListener("click", () => dismissActiveRing(true));
   $$(".theme-toggle").forEach((button) => button.addEventListener("click", toggleTheme));
   $$('[data-close]').forEach((button) => button.addEventListener("click", () => closeModal(button.dataset.close)));
   $$(".modal-layer, .search-layer").forEach((layer) => layer.addEventListener("click", (event) => {
@@ -217,6 +231,11 @@ async function syncSession(session) {
     state.reactions = [];
     state.reactionsReady = false;
     state.reactionTarget = null;
+    state.memberRings = [];
+    state.ringsReady = false;
+    state.ringSendingTo = null;
+    state.handledRingIds.clear();
+    clearActiveRingUi();
     state.pins = [];
     state.fileItems = [];
     state.filesFeatureReady = false;
@@ -294,7 +313,8 @@ async function loadWorkspace(scrollToBottom = false) {
   const clientsRequest = currentProfile?.role === "admin"
     ? supabaseClient.from("crm_clients").select("id,name,company,email,phone,status,notes,created_at,updated_at").order("updated_at", { ascending: false })
     : Promise.resolve({ data: [], error: null });
-  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult, fileItemsResult, reactionsResult] = await Promise.all([
+  const recentRingCutoff = new Date(Date.now() - 60 * 1000).toISOString();
+  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult, fileItemsResult, reactionsResult, ringsResult] = await Promise.all([
     supabaseClient.from("channels").select("*").order("created_at", { ascending: true }),
     supabaseClient.from("messages").select("id,channel_id,author_id,body,attachments,created_at,edited_at,author:profiles!messages_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(1000),
     supabaseClient.from("direct_messages").select("id,sender_id,recipient_id,body,attachments,created_at,edited_at").order("created_at", { ascending: true }).limit(1000),
@@ -309,6 +329,12 @@ async function loadWorkspace(scrollToBottom = false) {
       .select("id,channel_message_id,direct_message_id,thread_reply_id,user_id,emoji,created_at")
       .order("created_at", { ascending: true })
       .limit(5000),
+    supabaseClient.from("member_rings")
+      .select("id,sender_id,recipient_id,created_at,acknowledged_at")
+      .or(`sender_id.eq.${currentSession.user.id},recipient_id.eq.${currentSession.user.id}`)
+      .gte("created_at", recentRingCutoff)
+      .order("created_at", { ascending: false })
+      .limit(50),
   ]);
 
   const firstError = channelsResult.error || messagesResult.error || directResult.error || threadResult.error || pinsResult.error || membersResult.error || clientsResult.error;
@@ -324,6 +350,8 @@ async function loadWorkspace(scrollToBottom = false) {
   state.threadReplies = threadResult.data || [];
   state.reactions = reactionsResult.error ? [] : (reactionsResult.data || []);
   state.reactionsReady = !reactionsResult.error;
+  state.memberRings = ringsResult.error ? [] : (ringsResult.data || []);
+  state.ringsReady = !ringsResult.error;
   state.pins = pinsResult.data || [];
   state.fileItems = fileItemsResult.error ? [] : (fileItemsResult.data || []);
   state.filesFeatureReady = !fileItemsResult.error;
@@ -361,6 +389,7 @@ async function loadWorkspace(scrollToBottom = false) {
   renderConversation(scrollToBottom);
   renderActivityBadges();
   if (state.activeThread && !$("#thread-modal").hidden) renderThreadModal();
+  processPendingRings();
 }
 
 function applyProfile() {
@@ -580,6 +609,7 @@ function unreadDot() {
 
 function renderConversation(scrollToBottom = false) {
   $("#open-meeting").hidden = !(state.selectedChannelId || state.selectedDirectUserId);
+  $("#open-ring-direct").hidden = !state.selectedDirectUserId;
   if (state.selectedDirectUserId) {
     $("#composer-wrap").hidden = false;
     const member = state.members.find((item) => item.id === state.selectedDirectUserId);
@@ -2034,12 +2064,22 @@ function renderMembers() {
     role.textContent = titleCase(member.role);
     row.append(avatar, copy, role);
     if (member.id !== currentSession.user.id) {
+      const memberActions = document.createElement("div");
+      memberActions.className = "member-actions";
+      const ringButton = document.createElement("button");
+      ringButton.type = "button";
+      ringButton.className = "ring-member-button";
+      ringButton.title = `Ring ${member.display_name || member.email}`;
+      ringButton.setAttribute("aria-label", `Ring ${member.display_name || member.email}`);
+      ringButton.textContent = "Ring";
+      ringButton.addEventListener("click", () => sendMemberRing(member.id));
       const messageButton = document.createElement("button");
       messageButton.type = "button";
       messageButton.className = "message-member-button";
       messageButton.textContent = "Message";
       messageButton.addEventListener("click", () => selectDirectMessage(member.id));
-      row.append(messageButton);
+      memberActions.append(ringButton, messageButton);
+      row.append(memberActions);
     }
     container.append(row);
   });
@@ -2049,6 +2089,86 @@ function openMembersModal() {
   renderMembers();
   $("#open-add-member").hidden = currentProfile?.role !== "admin";
   openModal("members-modal");
+}
+
+async function sendMemberRing(memberId) {
+  if (!memberId || memberId === currentSession?.user.id || state.ringSendingTo) return;
+  const member = state.members.find((item) => item.id === memberId);
+  const name = member?.display_name || member?.email?.split("@")[0] || "this member";
+  if (!state.ringsReady) {
+    return showToast("Run vine-connect-rings-update.sql in Supabase before using attention rings.", "error");
+  }
+  state.ringSendingTo = memberId;
+  const { data, error } = await supabaseClient.rpc("send_member_ring", { target_member: memberId });
+  state.ringSendingTo = null;
+  if (error) return showToast(error.message, "error");
+  const createdRing = Array.isArray(data) ? data[0] : data;
+  if (createdRing) state.memberRings.unshift(createdRing);
+  showToast(`Ringing ${name}. This will not start a call.`, "success");
+}
+
+function processPendingRings() {
+  if (!state.ringsReady || state.activeRing || !currentSession?.user) return;
+  const now = Date.now();
+  const pending = state.memberRings.find((ring) => ring.recipient_id === currentSession.user.id
+    && !ring.acknowledged_at
+    && !state.handledRingIds.has(ring.id)
+    && now - new Date(ring.created_at).getTime() < RING_DURATION_MS);
+  if (pending) receiveMemberRing(pending);
+}
+
+function receiveMemberRing(ring) {
+  if (!ring || ring.recipient_id !== currentSession?.user.id || ring.acknowledged_at || state.handledRingIds.has(ring.id)) return;
+  state.handledRingIds.add(ring.id);
+  clearActiveRingUi();
+  state.activeRing = ring;
+  const sender = state.members.find((member) => member.id === ring.sender_id);
+  const name = sender?.display_name || sender?.email?.split("@")[0] || "A Vine member";
+  $("#ring-title").textContent = `${name} is ringing you`;
+  $("#ring-sender-name").textContent = name;
+  $("#ring-sender-avatar").textContent = getInitials(name);
+  $("#ring-sender-avatar").className = `avatar ${avatarClass(ring.sender_id)}`;
+  $("#ring-modal").hidden = false;
+  document.title = `\uD83D\uDD14 ${name} is ringing you | Vine Connect`;
+  if (!state.notificationsMuted) {
+    ringAudio.currentTime = 0;
+    ringAudio.volume = 0.9;
+    ringAudio.play().catch(() => {
+      // The visual alert remains available if the browser blocks background audio.
+    });
+  }
+  if (navigator.vibrate) navigator.vibrate([400, 180, 400, 180, 650]);
+  ringTimer = window.setTimeout(() => {
+    const activeName = $("#ring-sender-name").textContent;
+    clearActiveRingUi();
+    showToast(`The attention ring from ${activeName} ended.`, "success");
+  }, RING_DURATION_MS);
+}
+
+async function dismissActiveRing(openMessage) {
+  const ring = state.activeRing;
+  if (!ring) return clearActiveRingUi();
+  const senderId = ring.sender_id;
+  clearActiveRingUi();
+  const acknowledgedAt = new Date().toISOString();
+  const { error } = await supabaseClient.from("member_rings")
+    .update({ acknowledged_at: acknowledgedAt })
+    .eq("id", ring.id)
+    .eq("recipient_id", currentSession.user.id);
+  if (error) showToast(error.message, "error");
+  if (openMessage) selectDirectMessage(senderId);
+}
+
+function clearActiveRingUi() {
+  if (ringTimer) window.clearTimeout(ringTimer);
+  ringTimer = null;
+  ringAudio.pause();
+  ringAudio.currentTime = 0;
+  if (navigator.vibrate) navigator.vibrate(0);
+  const modal = $("#ring-modal");
+  if (modal) modal.hidden = true;
+  state.activeRing = null;
+  document.title = defaultDocumentTitle;
 }
 
 function openAddMemberModal() {
@@ -2401,10 +2521,31 @@ function subscribeRealtime() {
   if (state.reactionsReady) {
     realtime = realtime.on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => scheduleReload(false));
   }
+  if (state.ringsReady) {
+    realtime = realtime.on("postgres_changes", { event: "*", schema: "public", table: "member_rings" }, handleMemberRingChange);
+  }
   state.realtime = realtime
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "crm_clients" }, () => scheduleReload(false))
     .subscribe();
+}
+
+function handleMemberRingChange(payload) {
+  const ring = payload.new;
+  if (!ring?.id || !currentSession?.user) return;
+  const existingIndex = state.memberRings.findIndex((item) => item.id === ring.id);
+  if (existingIndex >= 0) state.memberRings[existingIndex] = ring;
+  else state.memberRings.unshift(ring);
+
+  if (payload.eventType === "INSERT" && ring.recipient_id === currentSession.user.id) {
+    receiveMemberRing(ring);
+    return;
+  }
+  if (payload.eventType === "UPDATE" && ring.sender_id === currentSession.user.id && ring.acknowledged_at) {
+    const recipient = state.members.find((member) => member.id === ring.recipient_id);
+    const name = recipient?.display_name || recipient?.email?.split("@")[0] || "The member";
+    showToast(`${name} saw your attention ring.`, "success");
+  }
 }
 
 function handleFileLibraryChange(payload) {
@@ -2531,13 +2672,24 @@ function isDirectUnread(memberId) {
 }
 
 function unlockNotificationAudio() {
-  const previousVolume = notificationAudio.volume;
-  notificationAudio.volume = 0;
-  notificationAudio.play().then(() => {
-    notificationAudio.pause();
-    notificationAudio.currentTime = 0;
-    notificationAudio.volume = previousVolume;
-  }).catch(() => { notificationAudio.volume = previousVolume; });
+  unlockAudio(notificationAudio);
+  if (state.activeRing && !state.notificationsMuted) {
+    ringAudio.currentTime = 0;
+    ringAudio.volume = 0.9;
+    ringAudio.play().catch(() => {});
+  } else {
+    unlockAudio(ringAudio);
+  }
+}
+
+function unlockAudio(audio) {
+  const previousVolume = audio.volume;
+  audio.volume = 0;
+  audio.play().then(() => {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = previousVolume;
+  }).catch(() => { audio.volume = previousVolume; });
 }
 
 function playNotificationSound() {
@@ -2560,15 +2712,21 @@ function toggleNotifications() {
   if (state.notificationsMuted) {
     notificationAudio.pause();
     notificationAudio.currentTime = 0;
+    ringAudio.pause();
+    ringAudio.currentTime = 0;
+  } else if (state.activeRing) {
+    ringAudio.currentTime = 0;
+    ringAudio.volume = 0.9;
+    ringAudio.play().catch(() => {});
   }
   updateNotificationButton();
-  showToast(state.notificationsMuted ? "Notification sound muted." : "Notification sound turned on.", "success");
+  showToast(state.notificationsMuted ? "Notification and ring sounds muted." : "Notification and ring sounds turned on.", "success");
 }
 
 function updateNotificationButton() {
   const button = $("#toggle-notifications");
   if (!button) return;
-  const label = state.notificationsMuted ? "Turn on notification sound" : "Mute notification sound";
+  const label = state.notificationsMuted ? "Turn on notification and ring sounds" : "Mute notification and ring sounds";
   button.setAttribute("aria-label", label);
   button.title = label;
   button.classList.toggle("muted", state.notificationsMuted);
@@ -2589,6 +2747,7 @@ function openModal(id) {
 
 function closeModal(id) {
   if (id === "meeting-modal") return closeMeeting();
+  if (id === "ring-modal") return dismissActiveRing(false);
   if (id === "emoji-modal") state.reactionTarget = null;
   const element = document.getElementById(id);
   if (element) element.hidden = true;

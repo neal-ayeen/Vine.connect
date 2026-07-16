@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#08271d">
   <meta name="description" content="Vine Connect by Vine Solutions - secure company chat.">
   <title>Vine Connect | Vine Solutions</title>
-  <link rel="stylesheet" href="style.css?v=20260717-1">
+  <link rel="stylesheet" href="style.css?v=20260717-2">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.29.0/index.js"></script>
   <script type="module">
@@ -15,7 +15,7 @@
   </script>
   <script src="supabase-config.js" defer></script>
   <script src="https://meet.jit.si/external_api.js" defer></script>
-  <script src="app.js?v=20260717-1" defer></script>
+  <script src="app.js?v=20260717-2" defer></script>
 </head>
 <body>
   <section class="auth-screen" id="auth-screen">
@@ -61,7 +61,7 @@
       <button class="global-search" id="open-search" type="button" aria-label="Search Vine Connect">
         <i class="glyph">&#8981;</i><span>Search Vine Connect</span><kbd>Ctrl K</kbd>
       </button>
-      <button class="topbar-icon notification-toggle" id="toggle-notifications" type="button" aria-label="Mute notification sound" title="Mute notification sound"><i class="glyph">&#128276;</i></button>
+      <button class="topbar-icon notification-toggle" id="toggle-notifications" type="button" aria-label="Mute notification and ring sounds" title="Mute notification and ring sounds"><i class="glyph">&#128276;</i></button>
       <button class="topbar-icon theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"><i class="glyph">&#9789;</i></button>
     </div>
 
@@ -107,6 +107,7 @@
           <p id="channel-description"></p>
         </div>
         <div class="header-actions">
+          <button class="ring-header-button" id="open-ring-direct" type="button" aria-label="Ring this member" title="Ring this member" hidden><i class="glyph">&#128276;</i><span class="ring-button-label">Ring</span></button>
           <button class="meeting-header-button" id="open-meeting" type="button" aria-label="Start or join video meeting" title="Start or join video meeting"><i class="glyph">&#128249;</i><span class="meeting-button-label">Meet</span></button>
           <button class="pin-header-button" id="open-pins" type="button" aria-label="View pinned messages" title="Pinned messages"><i class="glyph">&#9733;</i><strong id="pin-count">0</strong></button>
           <button class="member-stack" id="open-members" type="button" aria-label="View members">
@@ -186,9 +187,27 @@
       <button class="modal-close" data-close="members-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
       <div class="modal-icon"><i class="glyph">@</i></div>
       <h2 id="members-title">Vine Connect members</h2>
-      <p>Administrators can add members and manage workspace access.</p>
+      <p>Message a member or use Ring to get their attention. Administrators can also manage workspace access.</p>
       <button class="primary-button add-member-button" id="open-add-member" type="button" hidden>+ Add member</button>
       <div class="members-list" id="members-list"></div>
+    </div>
+  </div>
+
+  <div class="modal-layer ring-alert-layer" id="ring-modal" role="presentation" hidden>
+    <div class="modal ring-alert" role="alertdialog" aria-modal="true" aria-labelledby="ring-title" aria-describedby="ring-description">
+      <div class="ring-pulse" aria-hidden="true"><span>&#128276;</span></div>
+      <span class="eyebrow">Attention ring</span>
+      <h2 id="ring-title">A Vine member is ringing you</h2>
+      <p id="ring-description">This is only an attention ring. No voice or video call will start.</p>
+      <div class="ring-sender">
+        <span class="avatar avatar-blue" id="ring-sender-avatar">VC</span>
+        <div><strong id="ring-sender-name">Vine member</strong><small>wants you to check Vine Connect</small></div>
+      </div>
+      <div class="ring-actions">
+        <button class="secondary-button" id="dismiss-ring" type="button">I’m here</button>
+        <button class="primary-button" id="open-ring-message" type="button">Open message</button>
+      </div>
+      <small class="ring-timeout-note">The ringtone stops automatically after 30 seconds.</small>
     </div>
   </div>
 

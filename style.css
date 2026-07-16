@@ -108,6 +108,9 @@ kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; b
 .meeting-header-button { border-color: #bcd7c7 !important; color: #17613f !important; background: #f2faf5 !important; font-weight: 760; }
 .meeting-header-button:hover { border-color: #83b79a !important; background: #e5f5eb !important; }
 .meeting-button-label { font-size: 11px; }
+.ring-header-button { border-color: #d9c486 !important; color: #72560d !important; background: #fff9e8 !important; font-weight: 760; }
+.ring-header-button:hover { border-color: #b99a43 !important; background: #fff2c8 !important; }
+.ring-button-label { font-size: 11px; }
 .member-stack { padding-left: 6px !important; border-color: var(--line) !important; }
 .mini-avatar { width: 22px; height: 22px; margin-right: -8px; border: 2px solid #fff; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 7px; font-weight: 800; }
 .member-stack strong { margin-left: 9px; font-size: 12px; }
@@ -305,6 +308,7 @@ body[data-theme="dark"] .modal-close:hover { background: #22342a; color: #fff; }
 body[data-theme="dark"] .send-button:disabled { background: #26372e; color: #75887d; }
 body[data-theme="dark"] .toast { color-scheme: light; }
 body[data-theme="dark"] .meeting-header-button { color: #c8ead5 !important; border-color: #3f7056 !important; background: #173627 !important; }
+body[data-theme="dark"] .ring-header-button { color: #efd887 !important; border-color: #6c5a2d !important; background: #2d2714 !important; }
 
 @media (max-width: 760px) {
   .chat-shell { grid-template-columns: 1fr; grid-template-rows: 40px minmax(0,1fr); min-height: 540px; }
@@ -330,7 +334,7 @@ body[data-theme="dark"] .meeting-header-button { color: #c8ead5 !important; bord
 
 @media (max-width: 420px) {
   .global-search span { font-size: 11px; }
-  .header-actions > button:not(.member-stack):not(.pin-header-button):not(.meeting-header-button):not(:last-child) { display: none; }
+  .header-actions > button:not(.member-stack):not(.pin-header-button):not(.meeting-header-button):not(.ring-header-button):not(:last-child) { display: none; }
   .channel-title-line h1 { max-width: 38vw; }
   .message-row { grid-template-columns: 34px minmax(0, 1fr); gap: 9px; }
   .avatar { width: 34px; height: 34px; border-radius: 9px; }
@@ -384,6 +388,9 @@ body[data-theme="dark"] .meeting-header-button { color: #c8ead5 !important; bord
 .member-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .message-member-button { min-height: 28px; border: 1px solid #c9d6cd; border-radius: 6px; padding: 0 8px; color: #24583e; background: #fff; cursor: pointer; font-size: 9px; font-weight: 750; }
 .message-member-button:hover { border-color: #287a50; background: #edf6f0; }
+.member-actions { display: flex; align-items: center; gap: 5px; }
+.ring-member-button { min-height: 28px; border: 1px solid #ddc77f; border-radius: 6px; padding: 0 8px; color: #75580d; background: #fff9e8; cursor: pointer; font-size: 9px; font-weight: 780; }
+.ring-member-button:hover { border-color: #b99637; background: #fff1c2; }
 .channel-empty { margin: 8px 10px; color: rgba(255,255,255,.62); font-size: 11px; }
 .empty-message-note { margin: 0 28px 22px; color: var(--muted); font-size: 12px; }
 .attachment-holder { min-height: 45px; margin-top: 7px; }
@@ -443,6 +450,8 @@ body[data-theme="dark"] .credential-card > strong { color: #e2efe7; }
 body[data-theme="dark"] .credential-password-row input { border-color: #3d5b4b; color: #eef7f1; background: #0f1c15; }
 body[data-theme="dark"] .message-member-button { border-color: #3c5548; color: #cfe5d7; background: #15231b; }
 body[data-theme="dark"] .message-member-button:hover { background: #1d3427; }
+body[data-theme="dark"] .ring-member-button { border-color: #66572c; color: #efd887; background: #292412; }
+body[data-theme="dark"] .ring-member-button:hover { border-color: #8d7536; background: #3a3114; }
 body[data-theme="dark"] .crm-panel { border-color: #30483b; background: #121f18; }
 body[data-theme="dark"] .crm-panel-head { border-color: #30483b; background: #182820; }
 body[data-theme="dark"] .crm-row:hover { background: #1a2b22; }
@@ -565,6 +574,28 @@ body[data-theme="dark"] .message-reactions button { border-color: #385345; color
 body[data-theme="dark"] .message-reactions button:hover { border-color: #5b9270; background: #22382b; }
 body[data-theme="dark"] .message-reactions button.mine { border-color: #68a77f; color: #c8efd5; background: #214630; }
 
+.ring-alert-layer { z-index: 70; background: rgba(5,24,16,.72); }
+.ring-alert { width: min(430px,100%); padding: 34px 31px 28px; border: 1px solid #b8d6c4; text-align: center; }
+.ring-alert .eyebrow { display: block; margin-top: 13px; }
+.ring-alert h2 { margin: 6px 0 7px; color: #173c2b; font-size: 23px; }
+.ring-alert > p { margin: 0 auto; max-width: 330px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.ring-pulse { position: relative; width: 70px; height: 70px; display: grid; place-items: center; margin: 0 auto; border-radius: 50%; color: #fff; background: #287a50; font-size: 29px; box-shadow: 0 0 0 0 rgba(40,122,80,.42); animation: ring-pulse 1.35s infinite; }
+.ring-pulse span { display: block; animation: ring-shake .62s infinite; }
+@keyframes ring-pulse { 70% { box-shadow: 0 0 0 18px rgba(40,122,80,0); } 100% { box-shadow: 0 0 0 0 rgba(40,122,80,0); } }
+@keyframes ring-shake { 0%,100% { transform: rotate(0); } 20% { transform: rotate(-13deg); } 40% { transform: rotate(11deg); } 60% { transform: rotate(-8deg); } 80% { transform: rotate(5deg); } }
+.ring-sender { display: grid; grid-template-columns: 38px minmax(0,1fr); align-items: center; gap: 10px; margin: 21px 0 17px; padding: 11px 12px; border: 1px solid #dce7df; border-radius: 10px; background: #f4f9f6; text-align: left; }
+.ring-sender > div { min-width: 0; display: flex; flex-direction: column; }
+.ring-sender strong { overflow: hidden; color: #173c2b; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.ring-sender small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.ring-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.ring-actions .secondary-button,
+.ring-actions .primary-button { width: 100%; min-height: 42px; margin: 0; }
+.ring-timeout-note { display: block; margin-top: 12px; color: var(--muted); font-size: 9px; }
+body[data-theme="dark"] .ring-alert { border-color: #3a5a49; background: #101c15; }
+body[data-theme="dark"] .ring-alert h2,
+body[data-theme="dark"] .ring-sender strong { color: #e4f2e9; }
+body[data-theme="dark"] .ring-sender { border-color: #30483b; background: #182820; }
+
 @media (max-width: 560px) {
   .meeting-layer { padding: 0; }
   .meeting-modal { height: 100vh; height: 100dvh; max-height: none; padding: 0; border-radius: 0; border: 0; }
@@ -572,6 +603,7 @@ body[data-theme="dark"] .message-reactions button.mine { border-color: #68a77f; 
   .meeting-toolbar-actions { gap: 6px; }
   .meeting-toolbar-actions a { display: none; }
   .meeting-button-label { display: none; }
+  .ring-button-label { display: none; }
   .channel-delete-button { opacity: 1; }
   .thread-modal { height: min(820px, 94vh); padding: 22px 15px; }
   .emoji-grid { grid-template-columns: repeat(6, 1fr); }
