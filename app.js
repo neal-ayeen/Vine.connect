@@ -644,6 +644,7 @@ function openMeeting() {
     width: "100%",
     height: "100%",
     parentNode: frame,
+    onload: () => frame.querySelector(".meeting-loading")?.remove(),
     lang: "en",
     userInfo: {
       email: currentProfile.email,
@@ -655,6 +656,7 @@ function openMeeting() {
       prejoinConfig: { enabled: true },
     },
   });
+  window.setTimeout(() => frame.querySelector(".meeting-loading")?.remove(), 4000);
   jitsiApi.addEventListener("readyToClose", closeMeeting);
 }
 
