@@ -31,6 +31,7 @@ const state = {
 let supabaseClient = null;
 let currentSession = null;
 let currentProfile = null;
+let jitsiApi = null;
 let toastTimer = null;
 const notificationAudio = new Audio("notification.mp3?v=20260716-2");
 notificationAudio.preload = "auto";
@@ -114,6 +115,8 @@ function bindEvents() {
   $("#open-threads").addEventListener("click", openThreadsOverview);
   $("#open-mentions").addEventListener("click", openMentionsOverview);
   $("#open-pins").addEventListener("click", openPinnedMessages);
+  $("#open-meeting").addEventListener("click", openMeeting);
+  $("#leave-meeting").addEventListener("click", closeMeeting);
   $("#open-pins-sidebar").addEventListener("click", openPinnedMessages);
   $("#thread-form").addEventListener("submit", sendThreadReply);
   $("#thread-input").addEventListener("focus", () => { state.composerTarget = "thread-input"; });
@@ -188,6 +191,7 @@ async function login(event) {
 async function syncSession(session) {
   currentSession = session;
   if (!session) {
+    closeMeeting();
     unsubscribeRealtime();
     currentProfile = null;
     state.channels = [];
@@ -522,6 +526,7 @@ function unreadDot() {
 }
 
 function renderConversation(scrollToBottom = false) {
+  $("#open-meeting").hidden = !(state.selectedChannelId || state.selectedDirectUserId);
   if (state.selectedDirectUserId) {
     const member = state.members.find((item) => item.id === state.selectedDirectUserId);
     if (!member) {
@@ -562,6 +567,7 @@ function renderConversation(scrollToBottom = false) {
     $("#channel-name").textContent = "Vine Connect";
     $("#channel-description").textContent = "Your workspace has no channels yet.";
     $("#open-pins").hidden = true;
+    $("#open-meeting").hidden = true;
     $("#message-input").placeholder = "No channel selected";
     $("#message-input").disabled = true;
     $("#message-pane").innerHTML = '<div class="empty-channel"><span class="empty-icon">#</span><h2>No channels yet</h2><p>An administrator can create the first channel.</p></div>';
@@ -591,6 +597,76 @@ function renderConversation(scrollToBottom = false) {
 
   if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
   updateSendState();
+}
+
+function getMeetingContext() {
+  if (!currentSession?.user || !currentProfile) return null;
+  if (state.selectedDirectUserId) {
+    const member = state.members.find((item) => item.id === state.selectedDirectUserId);
+    if (!member) return null;
+    const participantIds = [currentSession.user.id, member.id]
+      .sort()
+      .map((id) => id.replace(/[^a-z0-9]/gi, ""))
+      .join("");
+    return {
+      roomName: `VineConnectDirect${participantIds}`,
+      title: `Meeting with ${member.display_name || member.email.split("@")[0]}`,
+    };
+  }
+
+  const channel = state.channels.find((item) => item.id === state.selectedChannelId);
+  if (!channel) return null;
+  return {
+    roomName: `VineConnectChannel${channel.id.replace(/[^a-z0-9]/gi, "")}`,
+    title: `#${channel.name} meeting`,
+  };
+}
+
+function openMeeting() {
+  const context = getMeetingContext();
+  if (!context) return showToast("Open a channel or direct message first.", "error");
+
+  closeMeeting();
+  const frame = $("#meeting-frame");
+  frame.innerHTML = '<div class="meeting-loading"><i class="glyph spin">&#9696;</i> Preparing the meeting...</div>';
+  $("#meeting-title").textContent = context.title;
+  const meetingUrl = `https://meet.jit.si/${encodeURIComponent(context.roomName)}`;
+  $("#meeting-new-tab").href = meetingUrl;
+  openModal("meeting-modal");
+
+  if (typeof window.JitsiMeetExternalAPI !== "function") {
+    frame.innerHTML = '<div class="meeting-error"><strong>The embedded meeting could not load.</strong><span>Check your internet connection, or use Open in new tab.</span></div>';
+    return;
+  }
+
+  jitsiApi = new window.JitsiMeetExternalAPI("meet.jit.si", {
+    roomName: context.roomName,
+    width: "100%",
+    height: "100%",
+    parentNode: frame,
+    lang: "en",
+    userInfo: {
+      email: currentProfile.email,
+      displayName: currentProfile.display_name || currentProfile.email.split("@")[0],
+    },
+    configOverwrite: {
+      startWithAudioMuted: true,
+      startWithVideoMuted: false,
+      prejoinConfig: { enabled: true },
+    },
+  });
+  jitsiApi.addEventListener("readyToClose", closeMeeting);
+}
+
+function closeMeeting() {
+  if (jitsiApi) {
+    try { jitsiApi.dispose(); } catch (_error) { /* The meeting may already be closed. */ }
+    jitsiApi = null;
+  }
+  const frame = $("#meeting-frame");
+  if (frame) frame.innerHTML = '<div class="meeting-loading"><i class="glyph spin">&#9696;</i> Preparing the meeting...</div>';
+  const modal = $("#meeting-modal");
+  if (modal) modal.hidden = true;
 }
 
 function appendMessages(pane, messages) {
@@ -1966,6 +2042,7 @@ function openModal(id) {
 }
 
 function closeModal(id) {
+  if (id === "meeting-modal") return closeMeeting();
   const element = document.getElementById(id);
   if (element) element.hidden = true;
 }
