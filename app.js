@@ -9,6 +9,10 @@ const state = {
   messages: [],
   directMessages: [],
   threadReplies: [],
+  reactions: [],
+  reactionsReady: false,
+  reactionTarget: null,
+  reactionBusy: false,
   pins: [],
   fileItems: [],
   filesFeatureReady: false,
@@ -136,9 +140,15 @@ function bindEvents() {
   $("#thread-italic").addEventListener("click", () => applyTextFormat("thread-input", "*", "italic text"));
   $("#thread-mention").addEventListener("click", () => openMentionPicker("thread-input"));
   $("#thread-emoji").addEventListener("click", () => openEmojiPicker("thread-input"));
-  $("#emoji-picker-list").addEventListener("emoji-click", (event) => {
+  $("#emoji-picker-list").addEventListener("emoji-click", async (event) => {
     const emoji = event.detail?.unicode;
     if (!emoji) return;
+    const reactionTarget = state.reactionTarget;
+    if (reactionTarget) {
+      closeModal("emoji-modal");
+      await toggleReaction(reactionTarget, emoji);
+      return;
+    }
     insertAtCursor(state.composerTarget, emoji);
     closeModal("emoji-modal");
   });
@@ -204,6 +214,9 @@ async function syncSession(session) {
     state.messages = [];
     state.directMessages = [];
     state.threadReplies = [];
+    state.reactions = [];
+    state.reactionsReady = false;
+    state.reactionTarget = null;
     state.pins = [];
     state.fileItems = [];
     state.filesFeatureReady = false;
@@ -281,7 +294,7 @@ async function loadWorkspace(scrollToBottom = false) {
   const clientsRequest = currentProfile?.role === "admin"
     ? supabaseClient.from("crm_clients").select("id,name,company,email,phone,status,notes,created_at,updated_at").order("updated_at", { ascending: false })
     : Promise.resolve({ data: [], error: null });
-  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult, fileItemsResult] = await Promise.all([
+  const [channelsResult, messagesResult, directResult, threadResult, pinsResult, membersResult, clientsResult, fileItemsResult, reactionsResult] = await Promise.all([
     supabaseClient.from("channels").select("*").order("created_at", { ascending: true }),
     supabaseClient.from("messages").select("id,channel_id,author_id,body,attachments,created_at,edited_at,author:profiles!messages_author_id_fkey(display_name,email)").order("created_at", { ascending: true }).limit(1000),
     supabaseClient.from("direct_messages").select("id,sender_id,recipient_id,body,attachments,created_at,edited_at").order("created_at", { ascending: true }).limit(1000),
@@ -292,6 +305,10 @@ async function loadWorkspace(scrollToBottom = false) {
     supabaseClient.from("file_library_items")
       .select("id,channel_id,parent_id,name,item_type,storage_path,external_url,mime_type,size_bytes,uploaded_by,created_at,updated_at")
       .order("created_at", { ascending: true }),
+    supabaseClient.from("message_reactions")
+      .select("id,channel_message_id,direct_message_id,thread_reply_id,user_id,emoji,created_at")
+      .order("created_at", { ascending: true })
+      .limit(5000),
   ]);
 
   const firstError = channelsResult.error || messagesResult.error || directResult.error || threadResult.error || pinsResult.error || membersResult.error || clientsResult.error;
@@ -305,6 +322,8 @@ async function loadWorkspace(scrollToBottom = false) {
   state.messages = messagesResult.data || [];
   state.directMessages = directResult.data || [];
   state.threadReplies = threadResult.data || [];
+  state.reactions = reactionsResult.error ? [] : (reactionsResult.data || []);
+  state.reactionsReady = !reactionsResult.error;
   state.pins = pinsResult.data || [];
   state.fileItems = fileItemsResult.error ? [] : (fileItemsResult.data || []);
   state.filesFeatureReady = !fileItemsResult.error;
@@ -1132,6 +1151,10 @@ function renderMessage(message) {
     hydrateAttachment(holder, attachment);
   });
 
+  const reactionTarget = reactionTargetFor(message);
+  const reactionBar = renderReactionBar(reactionTarget);
+  if (reactionBar) content.append(reactionBar);
+
   const replyCount = getThreadReplies(message).length;
   if (replyCount) {
     const summary = document.createElement("button");
@@ -1145,13 +1168,19 @@ function renderMessage(message) {
   row.append(content);
   const actions = document.createElement("div");
   actions.className = "message-actions";
+  const reactionButton = document.createElement("button");
+  reactionButton.type = "button";
+  reactionButton.title = "Add emoji reaction";
+  reactionButton.setAttribute("aria-label", "Add emoji reaction");
+  reactionButton.textContent = "\u263A";
+  reactionButton.addEventListener("click", () => openReactionPicker(reactionTarget));
   const threadButton = document.createElement("button");
   threadButton.type = "button";
   threadButton.title = "Reply in thread";
   threadButton.setAttribute("aria-label", "Reply in thread");
   threadButton.textContent = "\u21B3";
   threadButton.addEventListener("click", () => openThread(message));
-  actions.append(threadButton);
+  actions.append(reactionButton, threadButton);
   if (message.channel_id) {
     const pinButton = document.createElement("button");
     pinButton.type = "button";
@@ -1263,10 +1292,89 @@ function openMentionPicker(inputId) {
 
 function openEmojiPicker(inputId) {
   state.composerTarget = inputId;
+  state.reactionTarget = null;
+  configureEmojiPicker("Add an emoji", "Search or browse every emoji category, including skin tones, symbols, and flags.");
+  showEmojiPicker();
+}
+
+function openReactionPicker(target) {
+  if (!state.reactionsReady) {
+    return showToast("Run vine-connect-reactions-update.sql in Supabase before using message reactions.", "error");
+  }
+  state.reactionTarget = target;
+  configureEmojiPicker("React to this message", "Choose an emoji. Selecting one again removes your reaction.");
+  showEmojiPicker();
+}
+
+function configureEmojiPicker(title, description) {
+  $("#emoji-picker-title").textContent = title;
+  $("#emoji-picker-description").textContent = description;
+}
+
+function showEmojiPicker() {
   const picker = $("#emoji-picker-list");
   picker.classList.toggle("dark", document.body.dataset.theme === "dark");
   picker.classList.toggle("light", document.body.dataset.theme !== "dark");
   openModal("emoji-modal");
+}
+
+function reactionTargetFor(message) {
+  if (message.channel_id) return { type: "channel", id: message.id, field: "channel_message_id" };
+  if (message.sender_id) return { type: "direct", id: message.id, field: "direct_message_id" };
+  return { type: "thread", id: message.id, field: "thread_reply_id" };
+}
+
+function reactionsForTarget(target) {
+  return state.reactions.filter((reaction) => reaction[target.field] === target.id);
+}
+
+function renderReactionBar(target) {
+  if (!state.reactionsReady) return null;
+  const reactions = reactionsForTarget(target);
+  if (!reactions.length) return null;
+  const grouped = new Map();
+  reactions.forEach((reaction) => {
+    if (!grouped.has(reaction.emoji)) grouped.set(reaction.emoji, []);
+    grouped.get(reaction.emoji).push(reaction);
+  });
+  const bar = document.createElement("div");
+  bar.className = "message-reactions";
+  grouped.forEach((items, emoji) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = items.some((item) => item.user_id === currentSession?.user.id) ? "mine" : "";
+    const names = items.map((item) => {
+      const member = state.members.find((candidate) => candidate.id === item.user_id);
+      return member?.display_name || member?.email?.split("@")[0] || "Vine member";
+    });
+    button.title = names.join(", ");
+    button.setAttribute("aria-label", `${emoji} reaction from ${names.join(", ")}. Click to ${button.classList.contains("mine") ? "remove yours" : "add yours"}.`);
+    const symbol = document.createElement("span");
+    symbol.textContent = emoji;
+    const count = document.createElement("strong");
+    count.textContent = String(items.length);
+    button.append(symbol, count);
+    button.addEventListener("click", () => toggleReaction(target, emoji));
+    bar.append(button);
+  });
+  return bar;
+}
+
+async function toggleReaction(target, emoji) {
+  if (!state.reactionsReady) return showToast("Message reactions need the Supabase reactions update first.", "error");
+  if (state.reactionBusy || !currentSession?.user) return;
+  const existing = reactionsForTarget(target).find((reaction) => reaction.user_id === currentSession.user.id && reaction.emoji === emoji);
+  state.reactionBusy = true;
+  const result = existing
+    ? await supabaseClient.from("message_reactions").delete().eq("id", existing.id)
+    : await supabaseClient.from("message_reactions").insert({
+      [target.field]: target.id,
+      user_id: currentSession.user.id,
+      emoji,
+    });
+  state.reactionBusy = false;
+  if (result.error) return showToast(result.error.message, "error");
+  await loadWorkspace(false);
 }
 
 function getThreadReplies(message) {
@@ -1342,7 +1450,19 @@ function createCompactMessage(message, label = "") {
   const body = document.createElement("p");
   appendFormattedText(body, message.body || (message.attachments?.length ? "Shared an attachment" : "Message"));
   copy.append(meta, body);
+  const reactionBar = renderReactionBar(reactionTargetFor(message));
+  if (reactionBar) copy.append(reactionBar);
   card.append(avatar, copy);
+  if (label) {
+    const actions = document.createElement("div");
+    actions.className = "thread-reply-actions";
+    const react = document.createElement("button");
+    react.type = "button";
+    react.textContent = "React";
+    react.addEventListener("click", () => openReactionPicker(reactionTargetFor(message)));
+    actions.append(react);
+    card.append(actions);
+  }
   return card;
 }
 
@@ -1355,20 +1475,26 @@ function renderThreadReply(reply) {
     label.textContent = "edited";
     card.querySelector(".compact-message-meta").append(label);
   }
+  const actions = document.createElement("div");
+  actions.className = "thread-reply-actions";
+  const react = document.createElement("button");
+  react.type = "button";
+  react.textContent = "React";
+  react.addEventListener("click", () => openReactionPicker(reactionTargetFor(reply)));
+  actions.append(react);
   if (reply.author_id === currentSession.user.id) {
-    const actions = document.createElement("div");
-    actions.className = "thread-reply-actions";
     const edit = document.createElement("button");
     edit.type = "button";
     edit.textContent = "Edit";
     edit.addEventListener("click", () => editThreadReply(reply));
     const remove = document.createElement("button");
     remove.type = "button";
+    remove.className = "delete-thread-reply";
     remove.textContent = "Delete";
     remove.addEventListener("click", () => deleteThreadReply(reply));
     actions.append(edit, remove);
-    card.append(actions);
   }
+  card.append(actions);
   return card;
 }
 
@@ -2272,6 +2398,9 @@ function subscribeRealtime() {
   if (state.filesFeatureReady) {
     realtime = realtime.on("postgres_changes", { event: "*", schema: "public", table: "file_library_items" }, handleFileLibraryChange);
   }
+  if (state.reactionsReady) {
+    realtime = realtime.on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => scheduleReload(false));
+  }
   state.realtime = realtime
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => scheduleReload(false))
     .on("postgres_changes", { event: "*", schema: "public", table: "crm_clients" }, () => scheduleReload(false))
@@ -2460,6 +2589,7 @@ function openModal(id) {
 
 function closeModal(id) {
   if (id === "meeting-modal") return closeMeeting();
+  if (id === "emoji-modal") state.reactionTarget = null;
   const element = document.getElementById(id);
   if (element) element.hidden = true;
 }

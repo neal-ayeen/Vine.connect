@@ -335,8 +335,9 @@ body[data-theme="dark"] .meeting-header-button { color: #c8ead5 !important; bord
   .message-row { grid-template-columns: 34px minmax(0, 1fr); gap: 9px; }
   .avatar { width: 34px; height: 34px; border-radius: 9px; }
   .message-row .message-actions { display: flex !important; top: 4px; right: 9px; }
-  .message-row:not(.own-message) .message-content { padding-right: 66px; }
-  .own-message .message-content { padding-right: 132px; }
+  .message-actions button { width: 30px; }
+  .message-row:not(.own-message) .message-content { padding-right: 92px; }
+  .own-message .message-content { padding-right: 152px; }
   .modal { padding: 24px 20px; }
   .pending-file { min-width: 160px; }
 }
@@ -496,7 +497,7 @@ body[data-theme="dark"] .modal textarea { border-color: #354d41; color: #edf5f0;
 .thread-reply { padding-right: 86px; }
 .thread-reply-actions { position: absolute; top: 6px; right: 7px; display: flex; gap: 3px; }
 .thread-reply-actions button { border: 0; border-radius: 5px; padding: 4px 6px; color: #4f6759; background: #eaf1ec; cursor: pointer; font-size: 8px; font-weight: 760; }
-.thread-reply-actions button:last-child { color: #8e3341; }
+.thread-reply-actions .delete-thread-reply { color: #8e3341; }
 .thread-empty { margin: 18px; color: var(--muted); text-align: center; font-size: 11px; }
 .thread-composer { border: 1px solid #a9b8ae; border-radius: 9px; overflow: hidden; }
 .thread-composer:focus-within { border-color: #287a50; box-shadow: 0 0 0 1px #287a50; }
@@ -549,8 +550,20 @@ body[data-theme="dark"] .activity-card p,
 body[data-theme="dark"] .thread-composer textarea { color: #dde9e2; }
 body[data-theme="dark"] .thread-composer { border-color: #40584b; }
 body[data-theme="dark"] .thread-reply-actions button { color: #c4d9cc; background: #253b2f; }
-body[data-theme="dark"] .thread-reply-actions button:last-child { color: #ffc2cb; }
+body[data-theme="dark"] .thread-reply-actions .delete-thread-reply { color: #ffc2cb; }
 body[data-theme="dark"] .danger-button { border-color: #70424a; color: #ffc2cb; background: #321c21; }
+
+.message-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 7px; }
+.message-reactions button { min-width: 42px; height: 27px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #d8e3dc; border-radius: 999px; padding: 0 8px; color: #4d6055; background: #f6faf7; cursor: pointer; }
+.message-reactions button:hover { border-color: #88b59a; background: #eaf5ee; }
+.message-reactions button.mine { border-color: #5a9e75; color: #145f3b; background: #dff1e5; box-shadow: inset 0 0 0 1px rgba(40,122,80,.08); }
+.message-reactions button span { font-family: "Twemoji Country Flags", "Segoe UI Emoji", "Apple Color Emoji", sans-serif; font-size: 15px; line-height: 1; }
+.message-reactions button strong { font-size: 9px; font-weight: 820; }
+.compact-message .message-reactions { margin-top: 6px; }
+.compact-message .message-reactions button { height: 24px; min-width: 38px; padding: 0 7px; }
+body[data-theme="dark"] .message-reactions button { border-color: #385345; color: #c9dbcf; background: #192920; }
+body[data-theme="dark"] .message-reactions button:hover { border-color: #5b9270; background: #22382b; }
+body[data-theme="dark"] .message-reactions button.mine { border-color: #68a77f; color: #c8efd5; background: #214630; }
 
 @media (max-width: 560px) {
   .meeting-layer { padding: 0; }
