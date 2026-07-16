@@ -3,7 +3,6 @@
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 const MAX_VIDEO_SECONDS = 120;
 const STORAGE_BUCKET = "chat-files";
-const EMOJIS = ["\uD83D\uDE0A", "\uD83D\uDE02", "\uD83D\uDC4D", "\uD83D\uDE4C", "\uD83C\uDF89", "\u2764\uFE0F", "\uD83D\uDD25", "\u2705", "\uD83D\uDCCC", "\uD83D\uDC40", "\uD83E\uDD1D", "\uD83D\uDE80", "\uD83C\uDF3F", "\uD83D\uDCA1", "\uD83D\uDE4F", "\uD83D\uDCAC"];
 
 const state = {
   channels: [],
@@ -109,6 +108,7 @@ function bindEvents() {
   $("#open-client-form").addEventListener("click", openClientForm);
   $("#client-form").addEventListener("submit", createClient);
   $("#employee-form").addEventListener("submit", updateEmployee);
+  $("#reset-employee-password").addEventListener("click", resetEmployeePassword);
   $("#delete-employee").addEventListener("click", deleteEmployee);
   $("#open-threads").addEventListener("click", openThreadsOverview);
   $("#open-mentions").addEventListener("click", openMentionsOverview);
@@ -126,6 +126,12 @@ function bindEvents() {
   $("#thread-italic").addEventListener("click", () => applyTextFormat("thread-input", "*", "italic text"));
   $("#thread-mention").addEventListener("click", () => openMentionPicker("thread-input"));
   $("#thread-emoji").addEventListener("click", () => openEmojiPicker("thread-input"));
+  $("#emoji-picker-list").addEventListener("emoji-click", (event) => {
+    const emoji = event.detail?.unicode;
+    if (!emoji) return;
+    insertAtCursor(state.composerTarget, emoji);
+    closeModal("emoji-modal");
+  });
   $("#search-input").addEventListener("input", renderSearchResults);
   $("#mobile-menu").addEventListener("click", openSidebar);
   $("#sidebar-scrim").addEventListener("click", closeSidebar);
@@ -792,19 +798,9 @@ function openMentionPicker(inputId) {
 
 function openEmojiPicker(inputId) {
   state.composerTarget = inputId;
-  const container = $("#emoji-picker-list");
-  container.replaceChildren();
-  EMOJIS.forEach((emoji) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("aria-label", `Insert ${emoji}`);
-    button.textContent = emoji;
-    button.addEventListener("click", () => {
-      insertAtCursor(state.composerTarget, emoji);
-      closeModal("emoji-modal");
-    });
-    container.append(button);
-  });
+  const picker = $("#emoji-picker-list");
+  picker.classList.toggle("dark", document.body.dataset.theme === "dark");
+  picker.classList.toggle("light", document.body.dataset.theme !== "dark");
   openModal("emoji-modal");
 }
 
@@ -1461,6 +1457,8 @@ async function createMember(event) {
       throw new Error(data?.error || "The member was not created. Check the Edge Function logs.");
     }
 
+    $("#member-created-title").textContent = "Member created";
+    $("#member-created-description").textContent = "Send these temporary login details privately. The password is shown only in this window.";
     $("#created-member-email").textContent = data.member.email;
     $("#created-member-password").value = data.temporaryPassword;
     closeModal("add-member-modal");
@@ -1557,6 +1555,8 @@ function openEmployeeEditor(member) {
   $("#employee-role").value = member.role;
   $("#employee-role").disabled = member.id === currentSession.user.id;
   $("#employee-modal-email").textContent = member.email;
+  $("#reset-employee-password").disabled = member.id === currentSession.user.id;
+  $("#reset-employee-password").title = member.id === currentSession.user.id ? "Ask the other administrator to reset your password." : "Generate a temporary password for this employee";
   $("#delete-employee").disabled = member.id === currentSession.user.id;
   $("#delete-employee").title = member.id === currentSession.user.id ? "You cannot delete your own signed-in account." : "Delete this employee";
   hideError("employee-error");
@@ -1596,6 +1596,43 @@ async function updateEmployee(event) {
     showFormError("employee-error", error.message || "The employee could not be updated.");
   } finally {
     setButtonBusy(button, false, "Save employee");
+  }
+}
+
+async function resetEmployeePassword() {
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  const userId = $("#employee-id").value;
+  const member = state.members.find((item) => item.id === userId);
+  if (!member || userId === currentSession.user.id) {
+    return showFormError("employee-error", "Ask the other administrator to reset your password.");
+  }
+
+  const name = member.display_name || member.email;
+  if (!window.confirm(`Reset the password for ${name}?\n\nTheir previous password will stop working. A new temporary password will be generated.`)) return;
+
+  const button = $("#reset-employee-password");
+  hideError("employee-error");
+  setButtonBusy(button, true, "Resetting...");
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("add-member", {
+      body: { action: "reset-password", userId },
+    });
+    if (error) throw await memberFunctionError(error, "The password could not be reset.");
+    if (data?.error) throw new Error(data.error);
+    if (!data?.temporaryPassword || !data?.member?.email) {
+      throw new Error("The password was not returned. Check the Edge Function logs.");
+    }
+
+    $("#member-created-title").textContent = "Password reset";
+    $("#member-created-description").textContent = "Send this temporary password privately. The employee must replace it after signing in.";
+    $("#created-member-email").textContent = data.member.email;
+    $("#created-member-password").value = data.temporaryPassword;
+    closeModal("employee-modal");
+    openModal("member-created-modal");
+  } catch (error) {
+    showFormError("employee-error", error.message || "The password could not be reset.");
+  } finally {
+    setButtonBusy(button, false, "Reset password");
   }
 }
 

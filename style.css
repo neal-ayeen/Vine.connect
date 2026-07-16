@@ -13,7 +13,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { width: 100%; height: 100%; }
-body { margin: 0; overflow: hidden; background: #fff; color: var(--ink); font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; overflow: hidden; background: #fff; color: var(--ink); font-family: "Twemoji Country Flags", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input, textarea, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid rgba(73, 143, 255, .38); outline-offset: 1px; }
@@ -506,10 +506,13 @@ body[data-theme="dark"] .modal textarea { border-color: #354d41; color: #edf5f0;
 .emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; margin-top: 14px; }
 .emoji-grid button { aspect-ratio: 1; display: grid; place-items: center; border: 1px solid #e1e8e3; border-radius: 8px; background: #f8faf8; cursor: pointer; font-size: 21px; }
 .emoji-grid button:hover { border-color: #91b19d; background: #eaf4ed; transform: translateY(-1px); }
+.vine-emoji-picker { width: 100%; height: min(430px, 58vh); margin-top: 14px; font-family: "Twemoji Country Flags", "Segoe UI Emoji", "Apple Color Emoji", sans-serif; --border-radius: 10px; --border-color: #dce7df; --indicator-color: #287a50; --input-border-color: #91aa9a; --outline-color: #287a50; }
+body[data-theme="dark"] .vine-emoji-picker { --background: #101a15; --border-color: #30483b; --button-active-background: #294536; --button-hover-background: #20362a; --category-font-color: #e3efe7; --input-font-color: #edf5f0; --input-placeholder-color: #93a79a; --indicator-color: #74c895; }
 
 .crm-row { width: 100%; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
-.employee-modal-actions { display: grid; grid-template-columns: auto 1fr; gap: 9px; margin-top: 12px; }
+.employee-modal-actions { display: grid; grid-template-columns: auto auto 1fr; gap: 9px; margin-top: 12px; }
 .employee-modal-actions .primary-button { margin-top: 0; }
+.reset-password-button { width: auto; min-height: 42px; margin-top: 0; padding: 0 12px; }
 .danger-button { min-height: 42px; border: 1px solid #d8a9b0; border-radius: 7px; padding: 0 12px; color: #9b3041; background: #fff5f6; cursor: pointer; font-size: 11px; font-weight: 760; }
 .danger-button:hover:not(:disabled) { color: #fff; background: #a83e4e; border-color: #a83e4e; }
 .danger-button:disabled { opacity: .45; cursor: not-allowed; }
@@ -535,5 +538,7 @@ body[data-theme="dark"] .danger-button { border-color: #70424a; color: #ffc2cb; 
   .thread-modal { height: min(820px, 94vh); padding: 22px 15px; }
   .emoji-grid { grid-template-columns: repeat(6, 1fr); }
   .employee-modal-actions { grid-template-columns: 1fr; }
-  .employee-modal-actions .danger-button { order: 2; }
+  .employee-modal-actions .primary-button { order: 1; }
+  .employee-modal-actions .reset-password-button { order: 2; }
+  .employee-modal-actions .danger-button { order: 3; }
 }
