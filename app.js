@@ -79,6 +79,7 @@ function bindEvents() {
   $("#profile-form").addEventListener("submit", updateProfile);
   $("#message-input").addEventListener("input", updateSendState);
   $("#message-input").addEventListener("focus", () => { state.composerTarget = "message-input"; });
+  $("#message-input").addEventListener("paste", handleComposerPaste);
   $("#message-input").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -1196,6 +1197,41 @@ async function queueFiles(fileList) {
   }
   $("#file-input").value = "";
   renderPendingFiles();
+}
+
+async function handleComposerPaste(event) {
+  const clipboard = event.clipboardData;
+  if (!clipboard) return;
+
+  let images = [...(clipboard.files || [])].filter((file) => file.type.startsWith("image/"));
+  if (!images.length) {
+    images = [...(clipboard.items || [])]
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+  }
+  if (!images.length) return;
+
+  event.preventDefault();
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const namedImages = images.map((image, index) => {
+    const extension = image.type === "image/jpeg" ? "jpg"
+      : image.type === "image/gif" ? "gif"
+        : image.type === "image/webp" ? "webp"
+          : "png";
+    const suffix = images.length > 1 ? `-${index + 1}` : "";
+    return new File([image], `snip-${stamp}${suffix}.${extension}`, {
+      type: image.type || "image/png",
+      lastModified: Date.now(),
+    });
+  });
+
+  const previousCount = state.pendingFiles.length;
+  await queueFiles(namedImages);
+  const attachedCount = state.pendingFiles.length - previousCount;
+  if (attachedCount > 0) {
+    showToast(attachedCount === 1 ? "Screenshot attached." : `${attachedCount} screenshots attached.`, "success");
+  }
 }
 
 function renderPendingFiles() {
