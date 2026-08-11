@@ -1519,12 +1519,18 @@ async function openMeeting(meetingRecord = null) {
     access = await requestMeetingAccess(context, meetingRecord);
   } catch (error) {
     access = fallbackMeetingAccess(context);
-    $("#meeting-provider").textContent = "Demo service - add JaaS keys in Hostinger for protected meetings";
+    const meetingError = String(error?.message || "The protected meeting service is unavailable.");
+    $("#meeting-provider").textContent = "Demo meeting - protected service unavailable";
+    $("#meeting-provider").title = meetingError;
+    showToast(`Protected meeting unavailable: ${meetingError}`, "error");
     if (error?.name !== "AbortError") console.warn("Secure meeting backend unavailable; using demo meeting.", error);
   }
 
   $("#meeting-new-tab").href = access.meetingUrl;
-  if (access.provider === "jaas") $("#meeting-provider").textContent = "Protected by Vine Connect sign-in";
+  if (access.provider === "jaas") {
+    $("#meeting-provider").textContent = "Protected by Vine Connect sign-in";
+    $("#meeting-provider").removeAttribute("title");
+  }
 
   try {
     await loadJitsiExternalApi(access.externalApiUrl);

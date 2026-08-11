@@ -1,7 +1,7 @@
 "use strict";
 
-const CACHE = "vine-connect-shell-20260812-2";
-const SHELL = ["/", "/index.html", "/style.css?v=20260812-2", "/app.js?v=20260812-2", "/modern/modern-tools.js?v=20260812-1", "/flag-polyfill.js", "/offline.html", "/offline.js", "/manifest.webmanifest", "/vine-solutions-logo.png", "/notification.mp3?v=20260716-2", "/ringtone.mp3?v=20260717-1"];
+const CACHE = "vine-connect-shell-20260812-3";
+const SHELL = ["/", "/index.html", "/style.css?v=20260812-3", "/app.js?v=20260812-3", "/modern/modern-tools.js?v=20260812-1", "/flag-polyfill.js", "/offline.html", "/offline.js", "/manifest.webmanifest", "/vine-solutions-logo.png", "/notification.mp3?v=20260716-2", "/ringtone.mp3?v=20260717-1"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));

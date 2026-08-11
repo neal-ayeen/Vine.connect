@@ -23,6 +23,21 @@ const requiredSupabase = ["SUPABASE_URL", "SUPABASE_SECRET_KEY"];
 const requiredJaas = ["JAAS_APP_ID", "JAAS_API_KEY_ID", "JAAS_PRIVATE_KEY"];
 const missing = (names) => names.filter((name) => !String(process.env[name] || "").trim());
 
+function jaasConfiguration() {
+  const missingJaas = missing(requiredJaas);
+  if (missingJaas.length) return { ready: false, status: "missing", missing: missingJaas, privateKey: "" };
+  const privateKey = process.env.JAAS_PRIVATE_KEY.replace(/\\n/g, "\n").trim();
+  try {
+    const parsedKey = crypto.createPrivateKey(privateKey);
+    if (parsedKey.asymmetricKeyType !== "rsa") {
+      return { ready: false, status: "invalid_private_key", missing: [], privateKey: "" };
+    }
+    return { ready: true, status: "ready", missing: [], privateKey };
+  } catch (_error) {
+    return { ready: false, status: "invalid_private_key", missing: [], privateKey: "" };
+  }
+}
+
 const supabase = missing(requiredSupabase).length
   ? null
   : createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
@@ -75,11 +90,13 @@ const meetingLimiter = rateLimit({
 });
 
 app.get("/api/health", (_request, response) => {
+  const jaas = jaasConfiguration();
   response.json({
     ok: true,
     service: "vine-connect",
     supabaseConfigured: missing(requiredSupabase).length === 0,
-    jaasConfigured: missing(requiredJaas).length === 0,
+    jaasConfigured: jaas.ready,
+    jaasStatus: jaas.status,
     pushConfigured: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
   });
 });
@@ -120,8 +137,13 @@ async function authenticate(request, response, next) {
 registerPlatformApi({ app, supabase, authenticate });
 
 app.post("/api/meetings/join-token", meetingLimiter, authenticate, async (request, response) => {
-  const missingJaas = missing(requiredJaas);
-  if (missingJaas.length) return response.status(503).json({ error: `Secure meetings need: ${missingJaas.join(", ")}.` });
+  const jaas = jaasConfiguration();
+  if (!jaas.ready) {
+    const error = jaas.status === "missing"
+      ? `Secure meetings need: ${jaas.missing.join(", ")}.`
+      : "JAAS_PRIVATE_KEY is not a valid RSA private key. Copy the complete PEM key into Hostinger and redeploy.";
+    return response.status(503).json({ error });
+  }
 
   const roomName = String(request.body?.roomName || "").trim();
   const meetingId = String(request.body?.meetingId || "").trim();
@@ -156,7 +178,7 @@ app.post("/api/meetings/join-token", meetingLimiter, authenticate, async (reques
   const appId = process.env.JAAS_APP_ID.trim();
   const rawKeyId = process.env.JAAS_API_KEY_ID.trim();
   const keyId = rawKeyId.includes("/") ? rawKeyId : `${appId}/${rawKeyId}`;
-  const privateKey = process.env.JAAS_PRIVATE_KEY.replace(/\\n/g, "\n").trim();
+  const privateKey = jaas.privateKey;
   const now = Math.floor(Date.now() / 1000);
   const moderator = profile.role === "admin" || meeting?.host_id === profile.id;
   const token = jwt.sign(
