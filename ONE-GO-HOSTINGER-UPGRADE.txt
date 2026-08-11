@@ -1,0 +1,143 @@
+VINE CONNECT - ONE-GO HOSTINGER UPGRADE
+=======================================
+
+This release keeps the current messages, users, files, channels, threads,
+reactions, meetings and CRM records. Do not create a new Supabase project.
+
+WHAT THIS RELEASE ADDS
+----------------------
+- Secure Hostinger Node.js API for members, passwords, channels and files
+- Private channels and admin-only announcement channels
+- Push notifications, notification preferences and installable PWA
+- Typing indicators, online/away status and exact seen timestamps
+- Message bookmarks, scheduled messages and advanced search
+- File search, favorites, previews, descriptions, retention and versions
+- Employee status, last activity, admin audit log and CSV exports
+- Scheduled retention cleanup and push-subscription cleanup
+- React + Vite + TypeScript build foundation without removing legacy features
+- GitHub validation workflow and automatic-deployment-ready package
+
+STEP 1 - BACK UP
+----------------
+1. In Supabase, open Database > Backups and create/download a backup if your
+   plan provides it. Also export important tables in Table Editor if desired.
+2. In Hostinger File Manager, download the current public_html/app folder.
+3. In GitHub, keep the current production commit or create a release tag.
+
+STEP 2 - UPDATE SUPABASE ONCE
+-----------------------------
+1. Open your EXISTING Vine Connect Supabase project.
+2. Open SQL Editor > New query.
+3. Open the local file beside this app:
+   ..\vine-connect-supabase-admin\vine-connect-platform-upgrade.sql
+4. Copy all of it, paste it into the SQL Editor, then click Run.
+5. Confirm the result says Success. This migration is non-destructive and uses
+   IF NOT EXISTS for new objects. It preserves existing rows.
+
+STEP 3 - PUSH THIS FOLDER TO GITHUB
+-----------------------------------
+Use outputs\vine-connect-static as the repository root. It must contain:
+package.json, package-lock.json, server.mjs, server/, app.js, index.html,
+style.css, manifest.webmanifest, sw.js, src/, vite.config.ts and the media files.
+
+Do NOT commit a .env file or any Supabase secret/JaaS private key. The included
+.gitignore blocks these files. Push the updated files to your production branch.
+GitHub Actions will run npm ci, checks, the Vite build and npm audit.
+
+STEP 4 - CREATE/UPDATE THE HOSTINGER NODE.JS APP
+------------------------------------------------
+If Vine Connect is already a Hostinger Node.js Web App:
+1. Open Websites > Vine Connect Dashboard.
+2. Open the three-dot menu and choose Change repository if it is connected to
+   the wrong GitHub repository. Otherwise keep the current connection.
+3. Open Deployments > Settings and redeploy.
+
+If Vine Connect is currently Custom PHP/HTML instead of a Node.js Web App:
+1. Download a backup first. Hostinger currently requires Node.js to be added as
+   a new website. Removing the old website is irreversible.
+2. Open Websites > Add Website > Deploy Web App.
+3. Choose Import Git Repository, authorize GitHub, select the Vine Connect
+   repository and select the production branch.
+
+For either route, use these deployment settings:
+1. Framework/type: Other or Express (whichever Hostinger detects).
+2. Node.js version: 24.x. This project also supports 22.x.
+3. Build command: npm run build
+4. Start command: npm start
+5. Entry file, if Hostinger asks for it: server.mjs
+6. Output directory: leave empty for the Express/Other server app. The server
+   serves index.html and the generated modern/ folder itself.
+7. Application port: use the PORT supplied by Hostinger. Do not hard-code it.
+8. Enable automatic deployment from GitHub if the toggle is shown.
+
+STEP 5 - ADD HOSTINGER ENVIRONMENT VARIABLES
+---------------------------------------------
+In the Node.js app's Environment variables section add:
+
+NODE_ENV=production
+APP_URL=https://YOUR-DOMAIN.COM
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SECRET_KEY=YOUR_NEW_SUPABASE_SECRET_KEY
+VAPID_SUBJECT=mailto:YOUR-REAL-ADMIN-EMAIL
+VAPID_PUBLIC_KEY=GENERATED_PUBLIC_KEY
+VAPID_PRIVATE_KEY=GENERATED_PRIVATE_KEY
+CRON_SECRET=A_LONG_RANDOM_SECRET
+
+Optional secure meeting variables:
+JAAS_APP_ID=YOUR_JAAS_APP_ID
+JAAS_API_KEY_ID=YOUR_JAAS_API_KEY_ID
+JAAS_PRIVATE_KEY=YOUR_JAAS_PRIVATE_KEY_WITH_NEWLINES_AS_BACKSLASH_N
+JAAS_WEBHOOK_SECRET=ANOTHER_LONG_RANDOM_SECRET
+
+Generate VAPID keys only once by running this inside the project folder:
+npm run generate:vapid
+
+Copy the two printed values into Hostinger. Never place the private key in
+supabase-config.js, app.js, GitHub, screenshots or chat messages.
+
+IMPORTANT: a Supabase secret key was shown in an earlier screenshot. Rotate it
+in Supabase Dashboard > Project Settings > API Keys before using this release,
+then store only the replacement in Hostinger.
+
+STEP 6 - CONNECT THE DOMAIN
+---------------------------
+1. Assign the desired domain/subdomain to the Hostinger Node.js app.
+2. Let Hostinger create the required DNS record, or point the domain as hPanel
+   instructs if DNS is managed elsewhere.
+3. Wait for SSL to become Active. Push and service workers require HTTPS.
+4. In Supabase open Authentication > URL Configuration.
+5. Set Site URL to https://YOUR-DOMAIN.COM
+6. Add https://YOUR-DOMAIN.COM/** to Redirect URLs.
+
+STEP 7 - CREATE THE HOSTINGER CRON JOB
+--------------------------------------
+The cron delivers scheduled messages and removes expired files/subscriptions.
+
+1. In hPanel open Advanced > Cron Jobs.
+2. Choose every minute (or the shortest interval your plan allows).
+3. Add this command as ONE line, replacing both placeholders:
+
+curl -fsS -X POST -H "x-cron-secret: YOUR_CRON_SECRET" https://YOUR-DOMAIN.COM/api/cron/maintenance
+
+4. Save it. Use the exact same CRON_SECRET value as the Node app.
+
+STEP 8 - DEPLOY AND VERIFY
+--------------------------
+1. Trigger Redeploy in Hostinger after saving environment variables.
+2. Open https://YOUR-DOMAIN.COM/api/health
+3. It should show ok:true, supabaseConfigured:true and pushConfigured:true.
+   jaasConfigured:true appears when secure meetings are configured.
+4. Open the app in a private/incognito window and sign in.
+5. As Neal or Kevin, create a private test channel and select one employee.
+6. Confirm an unselected employee cannot see it.
+7. Send a direct message, bookmark it, schedule a message and test search.
+8. Open Profile > Enable push notifications on two devices and test Ring.
+9. Upload a test PDF to a Files channel, preview it, favorite it and replace it.
+10. Open Mini CRM and confirm employee status, activity, audit and exports.
+
+ROLLBACK
+--------
+If the deployment fails, redeploy the previous GitHub commit in Hostinger.
+The SQL migration only adds columns/tables/policies, so existing chat data remains.
+Do not delete the new tables during rollback; leaving them unused is safe.

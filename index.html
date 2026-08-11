@@ -4,18 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#08271d">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Vine Connect by Vine Solutions - secure company chat.">
   <title>Vine Connect | Vine Solutions</title>
-  <link rel="stylesheet" href="style.css?v=20260717-2">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="vine-solutions-logo.png">
+  <link rel="stylesheet" href="style.css?v=20260811-2">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.29.0/index.js"></script>
-  <script type="module">
-    import { polyfillCountryFlagEmojis } from "https://cdn.jsdelivr.net/npm/country-flag-emoji-polyfill@0.1.8/+esm";
-    polyfillCountryFlagEmojis();
-  </script>
+  <script type="module" src="flag-polyfill.js"></script>
   <script src="supabase-config.js" defer></script>
-  <script src="https://meet.jit.si/external_api.js" defer></script>
-  <script src="app.js?v=20260717-2" defer></script>
+  <script type="module" src="modern/modern-tools.js?v=20260811-2"></script>
+  <script src="app.js?v=20260811-2" defer></script>
 </head>
 <body>
   <section class="auth-screen" id="auth-screen">
@@ -56,7 +58,7 @@
 
   <main class="chat-shell" id="app" hidden>
     <div class="topbar">
-      <div class="topbar-spacer"></div>
+      <div class="topbar-spacer"><div id="modern-tools-root"></div></div>
       <button class="history-button" id="open-recent" type="button" aria-label="Open recent threads" title="Recent threads"><i class="glyph">&#9714;</i></button>
       <button class="global-search" id="open-search" type="button" aria-label="Search Vine Connect">
         <i class="glyph">&#8981;</i><span>Search Vine Connect</span><kbd>Ctrl K</kbd>
@@ -75,6 +77,9 @@
         <button class="side-link" id="open-threads" type="button"><i class="glyph">&#9676;</i><span>Threads</span><span class="side-badge subtle" id="thread-total">0</span></button>
         <button class="side-link" id="open-mentions" type="button"><i class="glyph">@</i><span>Mentions</span><span class="side-badge subtle" id="mention-total">0</span></button>
         <button class="side-link" id="open-pins-sidebar" type="button"><i class="glyph">&#9733;</i><span>Pinned</span></button>
+        <button class="side-link" id="open-bookmarks" type="button"><i class="glyph">&#128278;</i><span>Bookmarks</span><span class="side-badge subtle" id="bookmark-total">0</span></button>
+        <button class="side-link" id="open-scheduled-messages" type="button"><i class="glyph">&#9201;</i><span>Scheduled</span><span class="side-badge subtle" id="scheduled-total">0</span></button>
+        <button class="side-link" id="open-meetings" type="button"><i class="glyph">&#128249;</i><span>Meetings</span><span class="side-badge subtle" id="meeting-total">0</span></button>
         <button class="side-link" id="open-crm" type="button" hidden><i class="glyph">&#9638;</i><span>Mini CRM</span><span class="admin-tag">Admin</span></button>
         <p class="local-mode-note"><strong>Secure workspace</strong><br>Messages and private files are stored in your Supabase project.</p>
         <div class="channel-section">
@@ -132,11 +137,13 @@
               <button id="format-italic" type="button" aria-label="Italic" title="Italic"><i>I</i></button>
               <button id="format-mention" type="button" aria-label="Mention someone" title="Mention someone"><i class="glyph">@</i></button>
               <button id="format-emoji" type="button" aria-label="Add emoji" title="Add emoji"><i class="glyph">&#9786;</i></button>
+              <button id="schedule-message" type="button" aria-label="Schedule message" title="Schedule message"><i class="glyph">&#9201;</i></button>
             </div>
             <button class="send-button" id="send-message" type="button" aria-label="Send message" disabled><i class="glyph">&#10148;</i></button>
           </div>
           <input class="visually-hidden" id="file-input" type="file" multiple accept="image/*,video/mp4,video/webm,video/quicktime,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip">
         </div>
+        <div class="typing-indicator" id="typing-indicator" aria-live="polite" hidden></div>
         <p class="composer-hint"><strong>Enter</strong> to send &middot; <strong>Shift + Enter</strong> for a new line &middot; 30 MB per file</p>
       </div>
       <input class="visually-hidden" id="library-file-input" type="file" multiple>
@@ -158,12 +165,50 @@
             <option value="files">Files library</option>
           </select>
         </label>
+        <div class="form-pair">
+          <label>Visibility
+            <select id="new-channel-visibility">
+              <option value="workspace">Everyone in workspace</option>
+              <option value="private">Selected members only</option>
+            </select>
+          </label>
+          <label>Who can post
+            <select id="new-channel-posting-policy">
+              <option value="everyone">Everyone with access</option>
+              <option value="admins">Admins only</option>
+            </select>
+          </label>
+        </div>
+        <fieldset class="channel-member-fieldset" id="channel-member-fieldset" hidden>
+          <legend>Channel members</legend>
+          <div class="channel-member-picker" id="channel-member-picker"></div>
+        </fieldset>
         <label>Place it under <span>Optional</span>
           <select id="new-channel-parent"><option value="">No parent - top-level channel</option></select>
         </label>
         <div class="modal-tip"><i class="glyph folder-glyph">&#9635;</i><span id="channel-type-tip">Chat channels contain messages, threads, pins, and meetings.</span></div>
         <p class="form-error" id="channel-error" role="alert" hidden></p>
         <button class="primary-button" id="channel-submit" type="submit">Create channel</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="move-subchannel-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="move-subchannel-title">
+      <button class="modal-close" data-close="move-subchannel-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#8597;</i></div>
+      <h2 id="move-subchannel-title">Move sub-channel</h2>
+      <p id="move-subchannel-description">Choose its parent channel and exact position.</p>
+      <form id="move-subchannel-form">
+        <label>Parent channel
+          <select id="move-subchannel-parent" required></select>
+        </label>
+        <label>Position
+          <select id="move-subchannel-position" required></select>
+        </label>
+        <div class="modal-tip"><i class="glyph">&#8635;</i><span>This shared order updates automatically for every Vine Connect member.</span></div>
+        <p class="form-error" id="move-subchannel-error" role="alert" hidden></p>
+        <button class="primary-button" id="move-subchannel-submit" type="submit">Move sub-channel</button>
       </form>
     </div>
   </div>
@@ -178,6 +223,20 @@
         <label>Display name<input id="display-name" maxlength="60" required></label>
         <button class="primary-button" type="submit">Save profile</button>
       </form>
+      <section class="profile-device-settings">
+        <h3>App and notifications</h3>
+        <p>Install Vine Connect and receive alerts even when this tab is in the background.</p>
+        <div class="profile-device-actions">
+          <button class="secondary-button" id="install-vine-app" type="button">Install app</button>
+          <button class="secondary-button" id="enable-push" type="button">Enable push notifications</button>
+        </div>
+        <div class="notification-preferences" id="notification-preferences">
+          <label><input type="checkbox" data-notification-pref="direct_messages" checked> Direct messages</label>
+          <label><input type="checkbox" data-notification-pref="mentions" checked> Mentions</label>
+          <label><input type="checkbox" data-notification-pref="rings" checked> Attention rings</label>
+          <label><input type="checkbox" data-notification-pref="channel_messages"> All channel messages</label>
+        </div>
+      </section>
       <button class="secondary-button" id="sign-out" type="button">Sign out</button>
     </div>
   </div>
@@ -256,6 +315,17 @@
         <div><span class="eyebrow">Admin workspace</span><h2 id="crm-title">Vine mini CRM</h2><p>Employees and client relationships in one view.</p></div>
         <button class="primary-button compact-button" id="open-client-form" type="button">+ Add client</button>
       </div>
+      <div class="crm-insights">
+        <div><strong id="crm-active-now">0</strong><span>Online now</span></div>
+        <div><strong id="crm-active-week">0</strong><span>Active this week</span></div>
+        <div><strong id="crm-private-channel-count">0</strong><span>Private channels</span></div>
+        <div><strong id="crm-storage-usage">0 MB</strong><span>Stored files</span></div>
+      </div>
+      <div class="crm-export-actions">
+        <button class="secondary-button compact-button" data-export="employees" type="button">Export employees</button>
+        <button class="secondary-button compact-button" data-export="clients" type="button">Export clients</button>
+        <button class="secondary-button compact-button" data-export="audit" type="button">Export audit log</button>
+      </div>
       <div class="crm-grid">
         <section class="crm-panel">
           <div class="crm-panel-head"><h3>Employees</h3><span id="crm-employee-count">0</span></div>
@@ -266,6 +336,10 @@
           <div class="crm-list" id="crm-clients"></div>
         </section>
       </div>
+      <section class="crm-audit-panel">
+        <div class="crm-panel-head"><h3>Admin activity</h3><span id="crm-audit-count">0</span></div>
+        <div class="crm-audit-list" id="crm-audit-list"></div>
+      </section>
     </div>
   </div>
 
@@ -311,6 +385,13 @@
           <select id="employee-role" required>
             <option value="employee">Employee</option>
             <option value="admin">Admin</option>
+          </select>
+        </label>
+        <label>Member status
+          <select id="employee-status" required>
+            <option value="active">Active</option>
+            <option value="suspended">Suspended</option>
+            <option value="terminated">Terminated</option>
           </select>
         </label>
         <div class="modal-tip"><i class="glyph">!</i><span>Admins can create and delete channels, add members, and manage this CRM.</span></div>
@@ -375,10 +456,125 @@
     </div>
   </div>
 
+  <div class="modal-layer" id="meetings-hub-modal" role="presentation" hidden>
+    <div class="modal meetings-hub-modal" role="dialog" aria-modal="true" aria-labelledby="meetings-hub-title">
+      <button class="modal-close" data-close="meetings-hub-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="meetings-hub-head">
+        <div>
+          <span class="eyebrow">Vine Connect</span>
+          <h2 id="meetings-hub-title">Team meetings</h2>
+          <p>Start a secure meeting now or schedule one for your team.</p>
+        </div>
+        <div class="meetings-hub-actions">
+          <button class="secondary-button compact-button" id="start-context-meeting" type="button">Start now</button>
+          <button class="primary-button compact-button" id="open-schedule-meeting" type="button">+ Schedule meeting</button>
+        </div>
+      </div>
+      <div class="meeting-setup-note" id="meeting-setup-note" hidden>
+        <strong>Meeting schedule setup needed</strong>
+        <span>Ask an admin to run <code>vine-connect-meetings-update.sql</code> in Supabase. Instant meetings still work.</span>
+      </div>
+      <div class="meeting-summary" aria-label="Meeting summary">
+        <div><strong id="meeting-today-count">0</strong><span>Today</span></div>
+        <div><strong id="meeting-upcoming-count">0</strong><span>Upcoming</span></div>
+        <div><strong id="meeting-past-count">0</strong><span>Past</span></div>
+      </div>
+      <div class="meetings-columns">
+        <section class="meeting-list-section">
+          <div class="meeting-list-heading"><h3>Today and upcoming</h3><span>All times shown locally</span></div>
+          <div class="meeting-list" id="upcoming-meetings-list"></div>
+        </section>
+        <section class="meeting-list-section past-meetings-section">
+          <div class="meeting-list-heading"><h3>Recent meetings</h3><span>Last 30 days</span></div>
+          <div class="meeting-list" id="past-meetings-list"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="schedule-meeting-modal" role="presentation" hidden>
+    <div class="modal schedule-meeting-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-meeting-title">
+      <button class="modal-close" data-close="schedule-meeting-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#128249;</i></div>
+      <h2 id="schedule-meeting-title">Schedule a team meeting</h2>
+      <p>Invite Vine Connect members and keep the meeting visible in their Meetings hub.</p>
+      <form id="schedule-meeting-form">
+        <label>Meeting title<input id="scheduled-meeting-name" maxlength="120" placeholder="e.g. Monday operations sync" required></label>
+        <label>Meeting context
+          <select id="scheduled-meeting-context" required></select>
+        </label>
+        <div class="form-pair meeting-time-fields">
+          <label>Date<input id="scheduled-meeting-date" type="date" required></label>
+          <label>Time<input id="scheduled-meeting-time" type="time" required></label>
+        </div>
+        <label>Duration
+          <select id="scheduled-meeting-duration" required>
+            <option value="15">15 minutes</option>
+            <option value="30" selected>30 minutes</option>
+            <option value="45">45 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="90">1 hour 30 minutes</option>
+            <option value="120">2 hours</option>
+          </select>
+        </label>
+        <fieldset class="meeting-invite-fieldset">
+          <legend>Invite members</legend>
+          <div class="meeting-invite-list" id="meeting-invite-list"></div>
+        </fieldset>
+        <p class="form-error" id="schedule-meeting-error" role="alert" hidden></p>
+        <button class="primary-button" id="schedule-meeting-submit" type="submit">Schedule meeting</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="schedule-message-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="schedule-message-title">
+      <button class="modal-close" data-close="schedule-message-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#9201;</i></div>
+      <h2 id="schedule-message-title">Schedule this message</h2>
+      <p>The message and its attachments will be delivered by the Hostinger maintenance job.</p>
+      <form id="schedule-message-form">
+        <div class="form-pair">
+          <label>Date<input id="scheduled-message-date" type="date" required></label>
+          <label>Time<input id="scheduled-message-time" type="time" required></label>
+        </div>
+        <p class="form-error" id="schedule-message-error" role="alert" hidden></p>
+        <button class="primary-button" id="schedule-message-submit" type="submit">Schedule message</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="channel-settings-modal" role="presentation" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="channel-settings-title">
+      <button class="modal-close" data-close="channel-settings-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="modal-icon"><i class="glyph">&#9881;</i></div>
+      <h2 id="channel-settings-title">Channel permissions</h2>
+      <p id="channel-settings-description"></p>
+      <form id="channel-settings-form">
+        <div class="form-pair">
+          <label>Visibility<select id="channel-settings-visibility"><option value="workspace">Everyone</option><option value="private">Selected members</option></select></label>
+          <label>Who can post<select id="channel-settings-posting"><option value="everyone">Everyone with access</option><option value="admins">Admins only</option></select></label>
+        </div>
+        <label>Files storage quota (MB)<input id="channel-settings-quota" type="number" min="10" max="102400" step="10" value="1024"><span>Used for Files channels; default 1,024 MB.</span></label>
+        <fieldset class="channel-member-fieldset"><legend>Members</legend><div class="channel-member-picker" id="channel-settings-members"></div></fieldset>
+        <p class="form-error" id="channel-settings-error" role="alert" hidden></p>
+        <button class="primary-button" id="channel-settings-submit" type="submit">Save permissions</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="file-preview-modal" role="presentation" hidden>
+    <div class="modal file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
+      <button class="modal-close" data-close="file-preview-modal" type="button" aria-label="Close"><i class="glyph">&times;</i></button>
+      <div class="file-preview-head"><div><span class="eyebrow">Files library</span><h2 id="file-preview-title">File preview</h2><p id="file-preview-meta"></p></div><a class="secondary-button compact-button" id="file-preview-new-tab" target="_blank" rel="noopener noreferrer">Open in new tab</a></div>
+      <div class="file-preview-frame" id="file-preview-frame"></div>
+    </div>
+  </div>
+
   <div class="modal-layer meeting-layer" id="meeting-modal" role="presentation" hidden>
     <div class="modal meeting-modal" role="dialog" aria-modal="true" aria-labelledby="meeting-title">
       <div class="meeting-toolbar">
-        <div><span class="eyebrow">Vine Connect meeting</span><h2 id="meeting-title">Video meeting</h2></div>
+        <div><span class="eyebrow">Vine Connect meeting</span><h2 id="meeting-title">Video meeting</h2><span class="meeting-provider" id="meeting-provider">Preparing secure meeting...</span></div>
         <div class="meeting-toolbar-actions">
           <a id="meeting-new-tab" href="https://meet.jit.si" target="_blank" rel="noopener noreferrer">Open in new tab</a>
           <button class="danger-button" id="leave-meeting" type="button">Leave meeting</button>
@@ -390,7 +586,16 @@
 
   <div class="search-layer" id="search-modal" role="presentation" hidden>
     <div class="search-dialog" role="dialog" aria-modal="true" aria-label="Search channels">
-      <div class="search-field"><i class="glyph">&#8981;</i><input id="search-input" placeholder="Search channels..."><button data-close="search-modal" type="button"><kbd>Esc</kbd></button></div>
+      <div class="search-field"><i class="glyph">&#8981;</i><input id="search-input" placeholder="Search messages, members, channels and files..."><button data-close="search-modal" type="button"><kbd>Esc</kbd></button></div>
+      <div class="search-filters">
+        <select id="search-type" aria-label="Search type"><option value="all">Everything</option><option value="messages">Messages</option><option value="files">Files</option><option value="channels">Channels</option><option value="members">Members</option></select>
+        <select id="search-channel" aria-label="Search channel"><option value="">All channels</option></select>
+        <select id="search-member" aria-label="Search member"><option value="">All members</option></select>
+        <select id="search-file-type" aria-label="Search file type"><option value="">Any file type</option><option value="image">Images</option><option value="video">Videos</option><option value="audio">Audio</option><option value="document">Documents</option></select>
+        <input id="search-date" type="date" aria-label="Search date">
+        <label><input id="search-mentions" type="checkbox"> Mentions only</label>
+        <label><input id="search-pinned" type="checkbox"> Pinned only</label>
+      </div>
       <div class="search-results" id="search-results"></div>
     </div>
   </div>
