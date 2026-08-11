@@ -423,7 +423,8 @@ export function registerPlatformApi({ app, supabase, authenticate }) {
 
   app.delete("/api/channels/:id", authenticate, requireAdmin, handler(async (request, response) => {
     const { data: channel } = await supabase.from("channels").select("name").eq("id", request.params.id).single();
-    const { error } = await supabase.rpc("delete_vine_channel", { target_channel_id: request.params.id });
+    if (!channel) return response.status(404).json({ error: "Channel not found." });
+    const { error } = await supabase.from("channels").delete().eq("id", request.params.id);
     if (error) throw error;
     await audit(request, "channel.delete", "channel", request.params.id, `Deleted #${channel?.name || request.params.id}`);
     response.json({ ok: true });
