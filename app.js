@@ -385,6 +385,8 @@ async function changeTemporaryPassword(event) {
 
 async function loadWorkspace(scrollToBottom = false) {
   if (!supabaseClient || !currentSession) return;
+  const previousChannelId = state.selectedChannelId;
+  const previousDirectUserId = state.selectedDirectUserId;
   const messagePane = $("#message-pane");
   if (!state.channels.length) messagePane.innerHTML = '<div class="message-loading"><i class="glyph spin">&#9696;</i> Loading workspace...</div>';
 
@@ -515,12 +517,14 @@ async function loadWorkspace(scrollToBottom = false) {
   updatePlatformBadges();
   applyNotificationPreferencesUi();
   updateMeetingsBadge();
-  renderConversation(scrollToBottom);
+  const requestedMessage = deepLink.get("message");
+  const conversationChanged = previousChannelId !== state.selectedChannelId
+    || previousDirectUserId !== state.selectedDirectUserId;
+  renderConversation((scrollToBottom || conversationChanged) && !requestedMessage);
   renderActivityBadges();
   if (state.activeThread && !$("#thread-modal").hidden) renderThreadModal();
   if (!$("#meetings-hub-modal").hidden) renderMeetingsHub();
   processPendingRings();
-  const requestedMessage = deepLink.get("message");
   if (requestedMessage) requestAnimationFrame(() => {
     const element = document.querySelector(`[data-message-id="${CSS.escape(requestedMessage)}"]`);
     element?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -561,7 +565,9 @@ function renderChannels() {
 
   topLevel.forEach((channel) => {
     const children = state.channels.filter((item) => item.parent_id === channel.id).sort(sortChannels);
-    const unread = isChannelUnread(channel.id) || children.some((child) => isChannelUnread(child.id));
+    const unreadCount = channelUnreadCount(channel.id)
+      + children.reduce((total, child) => total + channelUnreadCount(child.id), 0);
+    const unread = unreadCount > 0;
     const group = document.createElement("div");
     const row = document.createElement("div");
     row.className = `channel-row${channel.id === state.selectedChannelId && !state.selectedDirectUserId ? " active" : ""}${unread ? " unread" : ""}`;
@@ -583,7 +589,7 @@ function renderChannels() {
       row.append(spacer);
     }
 
-    row.append(channelButton(channel, unread));
+    row.append(channelButton(channel, unreadCount));
     if (currentProfile?.role === "admin") row.append(channelDeleteButton(channel));
     group.append(row);
 
@@ -591,13 +597,15 @@ function renderChannels() {
       children.forEach((child) => {
         const button = document.createElement("button");
         button.type = "button";
-        const childUnread = isChannelUnread(child.id);
+        const childUnreadCount = channelUnreadCount(child.id);
+        const childUnread = childUnreadCount > 0;
         button.className = `subchannel${child.id === state.selectedChannelId && !state.selectedDirectUserId ? " active" : ""}${childUnread ? " unread" : ""}`;
         button.innerHTML = `<span class="sub-line"></span><i class="glyph">${channelGlyph(child)}</i>`;
         const name = document.createElement("span");
+        name.className = "channel-name-label";
         name.textContent = child.name;
         button.append(name);
-        if (childUnread) button.append(unreadDot());
+        if (childUnread) button.append(unreadBadge(childUnreadCount));
         button.addEventListener("click", () => selectChannel(child.id));
         const subRow = document.createElement("div");
         subRow.className = "subchannel-row";
@@ -618,15 +626,16 @@ function sortChannels(first, second) {
     || String(first.id).localeCompare(String(second.id));
 }
 
-function channelButton(channel, unread = false) {
+function channelButton(channel, unreadCount = 0) {
   const button = document.createElement("button");
   button.className = "channel-button";
   button.type = "button";
   button.innerHTML = `<i class="glyph">${channelGlyph(channel)}</i>`;
   const name = document.createElement("span");
+  name.className = "channel-name-label";
   name.textContent = channel.name;
   button.append(name);
-  if (unread) button.append(unreadDot());
+  if (unreadCount > 0) button.append(unreadBadge(unreadCount));
   button.addEventListener("click", () => selectChannel(channel.id));
   return button;
 }
@@ -748,7 +757,8 @@ function renderDirectMessages() {
   container.replaceChildren();
   state.members.filter((member) => member.id !== currentSession?.user.id).forEach((member) => {
     const button = document.createElement("button");
-    const unread = isDirectUnread(member.id);
+    const unreadCount = directUnreadCount(member.id);
+    const unread = unreadCount > 0;
     button.type = "button";
     button.className = `direct-message-button${member.id === state.selectedDirectUserId ? " active" : ""}${unread ? " unread" : ""}`;
     button.disabled = (member.member_status || "active") !== "active";
@@ -761,7 +771,7 @@ function renderDirectMessages() {
     name.className = "direct-name";
     name.textContent = `${member.display_name || member.email.split("@")[0]}${button.disabled ? ` (${titleCase(member.member_status)})` : ""}`;
     button.append(avatar, name);
-    if (unread) button.append(unreadDot());
+    if (unread) button.append(unreadBadge(unreadCount));
     button.addEventListener("click", () => selectDirectMessage(member.id));
     container.append(button);
   });
@@ -782,11 +792,14 @@ function selectDirectMessage(memberId) {
   closeSidebar();
 }
 
-function unreadDot() {
-  const dot = document.createElement("span");
-  dot.className = "unread-dot";
-  dot.setAttribute("aria-label", "Unread messages");
-  return dot;
+function unreadBadge(count) {
+  const safeCount = Math.max(1, Number(count) || 1);
+  const badge = document.createElement("span");
+  badge.className = "unread-count";
+  badge.textContent = safeCount > 99 ? "99+" : String(safeCount);
+  badge.setAttribute("aria-label", `${safeCount} unread ${safeCount === 1 ? "message" : "messages"}`);
+  badge.title = `${safeCount} unread ${safeCount === 1 ? "message" : "messages"}`;
+  return badge;
 }
 
 function renderConversation(scrollToBottom = false) {
@@ -823,7 +836,7 @@ function renderConversation(scrollToBottom = false) {
     markMessagesSeen(messages);
     renderChannels();
     renderDirectMessages();
-    if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
+    if (scrollToBottom) scrollConversationToBottom();
     updateSendState();
     return;
   }
@@ -871,8 +884,52 @@ function renderConversation(scrollToBottom = false) {
   renderChannels();
   renderDirectMessages();
 
-  if (scrollToBottom) requestAnimationFrame(() => { pane.scrollTop = pane.scrollHeight; });
+  if (scrollToBottom) scrollConversationToBottom();
   updateSendState();
+}
+
+function scrollConversationToBottom() {
+  const pane = $("#message-pane");
+  if (!pane) return;
+  const channelId = state.selectedChannelId;
+  const directUserId = state.selectedDirectUserId;
+  let cancelled = false;
+  let observer = null;
+  const timers = [];
+
+  const stillViewingConversation = () => channelId === state.selectedChannelId
+    && directUserId === state.selectedDirectUserId;
+  const jump = () => {
+    if (cancelled || !stillViewingConversation()) return;
+    pane.scrollTop = pane.scrollHeight;
+  };
+  const cleanup = () => {
+    if (cancelled) return;
+    cancelled = true;
+    observer?.disconnect();
+    timers.forEach((timer) => window.clearTimeout(timer));
+    pane.removeEventListener("load", jump, true);
+    pane.removeEventListener("loadedmetadata", jump, true);
+    pane.removeEventListener("wheel", cancel, true);
+    pane.removeEventListener("touchstart", cancel, true);
+    pane.removeEventListener("pointerdown", cancel, true);
+    window.removeEventListener("keydown", cancel, true);
+  };
+  const cancel = () => cleanup();
+
+  pane.addEventListener("load", jump, true);
+  pane.addEventListener("loadedmetadata", jump, true);
+  pane.addEventListener("wheel", cancel, { capture: true, passive: true, once: true });
+  pane.addEventListener("touchstart", cancel, { capture: true, passive: true, once: true });
+  pane.addEventListener("pointerdown", cancel, { capture: true, passive: true, once: true });
+  window.addEventListener("keydown", cancel, { capture: true, once: true });
+
+  observer = new MutationObserver(() => requestAnimationFrame(jump));
+  observer.observe(pane, { childList: true, subtree: true });
+  jump();
+  requestAnimationFrame(() => requestAnimationFrame(jump));
+  [80, 200, 500, 1000].forEach((delay) => timers.push(window.setTimeout(jump, delay)));
+  timers.push(window.setTimeout(cleanup, 1600));
 }
 
 function renderFileLibrary(channel) {
@@ -3830,35 +3887,35 @@ function saveViewState() {
   localStorage.setItem(`vine-connect-last-viewed:${currentSession.user.id}`, JSON.stringify(state.lastViewed));
 }
 
-function isChannelUnread(channelId) {
+function channelUnreadCount(channelId) {
   const viewedAt = state.lastViewed[`channel:${channelId}`] || "1970-01-01T00:00:00.000Z";
-  const unreadMessage = state.messages.some((message) => message.channel_id === channelId
+  const unreadMessages = state.messages.filter((message) => message.channel_id === channelId
     && message.author_id !== currentSession?.user.id
-    && new Date(message.created_at) > new Date(viewedAt));
-  const unreadReply = state.threadReplies.some((reply) => {
+    && new Date(message.created_at) > new Date(viewedAt)).length;
+  const unreadReplies = state.threadReplies.filter((reply) => {
     const parent = state.messages.find((message) => message.id === reply.channel_message_id);
     return parent?.channel_id === channelId
       && reply.author_id !== currentSession?.user.id
       && new Date(reply.created_at) > new Date(viewedAt);
-  });
-  const unreadFile = state.fileItems.some((item) => item.channel_id === channelId
+  }).length;
+  const unreadFiles = state.fileItems.filter((item) => item.channel_id === channelId
     && item.uploaded_by !== currentSession?.user.id
-    && new Date(item.created_at) > new Date(viewedAt));
-  return unreadMessage || unreadReply || unreadFile;
+    && new Date(item.created_at) > new Date(viewedAt)).length;
+  return unreadMessages + unreadReplies + unreadFiles;
 }
 
-function isDirectUnread(memberId) {
+function directUnreadCount(memberId) {
   const viewedAt = state.lastViewed[`direct:${memberId}`] || "1970-01-01T00:00:00.000Z";
-  const unreadMessage = state.directMessages.some((message) => message.sender_id === memberId
+  const unreadMessages = state.directMessages.filter((message) => message.sender_id === memberId
     && message.recipient_id === currentSession?.user.id
-    && new Date(message.created_at) > new Date(viewedAt));
-  const unreadReply = state.threadReplies.some((reply) => {
+    && new Date(message.created_at) > new Date(viewedAt)).length;
+  const unreadReplies = state.threadReplies.filter((reply) => {
     const parent = state.directMessages.find((message) => message.id === reply.direct_message_id);
     if (!parent || reply.author_id === currentSession?.user.id || new Date(reply.created_at) <= new Date(viewedAt)) return false;
     return (parent.sender_id === memberId && parent.recipient_id === currentSession?.user.id)
       || (parent.sender_id === currentSession?.user.id && parent.recipient_id === memberId);
-  });
-  return unreadMessage || unreadReply;
+  }).length;
+  return unreadMessages + unreadReplies;
 }
 
 function unlockNotificationAudio() {
