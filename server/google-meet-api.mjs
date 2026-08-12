@@ -69,7 +69,10 @@ export function registerGoogleMeetApi({ app, supabase, authenticate, requireAdmi
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const detail = payload.error_description || payload.error || `Google OAuth returned ${response.status}.`;
-      throw Object.assign(new Error(detail), { statusCode: 502 });
+      throw Object.assign(new Error(`Google OAuth token request failed: ${detail}`), {
+        statusCode: 502,
+        publicMessage: `Google authorization failed: ${detail}. Disconnect and reconnect the Google account, then try again.`,
+      });
     }
     return payload;
   }
@@ -85,14 +88,25 @@ export function registerGoogleMeetApi({ app, supabase, authenticate, requireAdmi
   }
 
   async function freshAccessToken(connection) {
-    const refreshToken = decryptToken(connection.encrypted_refresh_token);
+    let refreshToken;
+    try {
+      refreshToken = decryptToken(connection.encrypted_refresh_token);
+    } catch (error) {
+      throw Object.assign(new Error(`Google refresh token decryption failed: ${error.message}`), {
+        statusCode: 500,
+        publicMessage: "The Google connection no longer matches GOOGLE_TOKEN_ENCRYPTION_KEY. Disconnect Google Meet, connect it again, and do not change the encryption key afterward.",
+      });
+    }
     const token = await googleTokenRequest({
       client_id: process.env.GOOGLE_CLIENT_ID.trim(),
       client_secret: process.env.GOOGLE_CLIENT_SECRET.trim(),
       refresh_token: refreshToken,
       grant_type: "refresh_token",
     });
-    if (!token.access_token) throw Object.assign(new Error("Google did not return an access token."), { statusCode: 502 });
+    if (!token.access_token) throw Object.assign(new Error("Google did not return an access token."), {
+      statusCode: 502,
+      publicMessage: "Google did not return an access token. Disconnect and reconnect the Google account.",
+    });
     return token.access_token;
   }
 
@@ -294,12 +308,21 @@ export function registerGoogleMeetApi({ app, supabase, authenticate, requireAdmi
     const googleResponse = await fetch("https://meet.googleapis.com/v2/spaces", {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({
+        config: {
+          accessType: "OPEN",
+          entryPointAccess: "ALL",
+        },
+      }),
     });
     const googleSpace = await googleResponse.json().catch(() => ({}));
     if (!googleResponse.ok || !googleSpace.meetingUri || !googleSpace.name) {
       const detail = googleSpace?.error?.message || `Google Meet returned ${googleResponse.status}.`;
-      throw Object.assign(new Error(detail), { statusCode: 502 });
+      const reason = googleSpace?.error?.details?.find?.((item) => item?.reason)?.reason;
+      throw Object.assign(new Error(`Google Meet spaces.create failed (${googleResponse.status}): ${detail}${reason ? ` [${reason}]` : ""}`), {
+        statusCode: 502,
+        publicMessage: `Google Meet could not create the meeting: ${detail}${reason ? ` (${reason})` : ""}.`,
+      });
     }
     const { data: meeting, error } = await supabase.from("google_meet_spaces").insert({
       google_space_name: googleSpace.name,
