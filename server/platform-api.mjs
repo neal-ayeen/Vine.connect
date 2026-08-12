@@ -237,6 +237,46 @@ export function registerPlatformApi({ app, supabase, authenticate }) {
     response.status(201).json({ scheduled: false, message });
   }));
 
+  app.delete("/api/messages/:messageType/:id/attachments", authenticate, handler(async (request, response) => {
+    const messageType = request.params.messageType;
+    if (!new Set(["channel", "direct"]).has(messageType)) return response.status(400).json({ error: "The message type is invalid." });
+    const table = messageType === "direct" ? "direct_messages" : "messages";
+    const authorColumn = messageType === "direct" ? "sender_id" : "author_id";
+    const { data: message, error: messageError } = await supabase
+      .from(table)
+      .select(`id,body,attachments,${authorColumn}`)
+      .eq("id", request.params.id)
+      .single();
+    if (messageError || !message) return response.status(404).json({ error: "Message not found." });
+    if (message[authorColumn] !== request.vineUser.profile.id && request.vineUser.profile.role !== "admin") {
+      return response.status(403).json({ error: "Only the sender or an administrator can delete this file." });
+    }
+
+    const attachmentId = String(request.body?.attachmentId || "");
+    const attachmentPath = String(request.body?.path || "");
+    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+    const attachment = attachments.find((item) => (
+      (attachmentId && String(item?.id || "") === attachmentId)
+      || (attachmentPath && String(item?.path || "") === attachmentPath)
+    ));
+    if (!attachment?.path) return response.status(404).json({ error: "The file is no longer attached to this message." });
+
+    const nextAttachments = attachments.filter((item) => item !== attachment);
+    const deleteEmptyMessage = !nextAttachments.length && !String(message.body || "").trim();
+    const { error: databaseError } = deleteEmptyMessage
+      ? await supabase.from(table).delete().eq("id", message.id)
+      : await supabase.from(table).update({ attachments: nextAttachments }).eq("id", message.id);
+    if (databaseError) throw databaseError;
+
+    const { error: storageError } = await supabase.storage.from("chat-files").remove([attachment.path]);
+    if (storageError) {
+      if (!deleteEmptyMessage) await supabase.from(table).update({ attachments }).eq("id", message.id);
+      throw storageError;
+    }
+    await audit(request, "message.attachment_delete", messageType === "direct" ? "direct_message" : "channel_message", message.id, `Deleted attachment ${String(attachment.name || "file").slice(0, 160)}`, { path: attachment.path });
+    response.json({ ok: true, messageDeleted: deleteEmptyMessage, attachments: nextAttachments });
+  }));
+
   app.post("/api/files/validate", authenticate, handler(async (request, response) => {
     const files = Array.isArray(request.body?.files) ? request.body.files : [];
     const invalid = files.find((file) => {
