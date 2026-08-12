@@ -2,6 +2,7 @@
 
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 const MAX_VIDEO_SECONDS = 120;
+const MAX_VOICE_SECONDS = 5 * 60;
 const STORAGE_BUCKET = "chat-files";
 const RING_DURATION_MS = 30 * 1000;
 
@@ -55,6 +56,9 @@ const state = {
   movingSubchannelId: null,
   pendingFiles: [],
   pendingPreviews: new Map(),
+  voiceRecording: null,
+  voiceCapturePending: false,
+  voiceCaptureToken: 0,
   attachmentUrls: new Map(),
   realtime: null,
   reloadTimer: null,
@@ -147,6 +151,9 @@ function bindEvents() {
   $("#format-mention").addEventListener("click", () => openMentionPicker("message-input"));
   $("#format-emoji").addEventListener("click", () => openEmojiPicker("message-input"));
   $("#attach-files").addEventListener("click", () => $("#file-input").click());
+  $("#record-voice-message").addEventListener("click", startVoiceRecording);
+  $("#stop-voice-message").addEventListener("click", () => stopVoiceRecording(false));
+  $("#cancel-voice-message").addEventListener("click", () => stopVoiceRecording(true));
   $("#file-input").addEventListener("change", (event) => queueFiles(event.target.files));
   $("#library-file-input").addEventListener("change", (event) => uploadLibraryFiles(event.target.files));
   $("#focus-composer").addEventListener("click", () => $("#message-input").focus());
@@ -274,6 +281,7 @@ async function login(event) {
 async function syncSession(session) {
   currentSession = session;
   if (!session) {
+    stopVoiceRecording(true, true);
     closeMeeting();
     unsubscribeRealtime();
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
@@ -734,6 +742,7 @@ function getChannelDescendantIds(channelId) {
 }
 
 function selectChannel(id) {
+  if (state.selectedChannelId !== id || state.selectedDirectUserId) stopVoiceRecording(true, true);
   if (state.selectedChannelId !== id) {
     state.selectedFileFolderId = null;
     state.fileSearch = "";
@@ -779,6 +788,7 @@ function renderDirectMessages() {
 
 function selectDirectMessage(memberId) {
   if (memberId === currentSession?.user.id) return;
+  if (state.selectedDirectUserId !== memberId || state.selectedChannelId) stopVoiceRecording(true, true);
   state.selectedDirectUserId = memberId;
   state.selectedChannelId = null;
   state.selectedFileFolderId = null;
@@ -2001,7 +2011,7 @@ function renderMessage(message) {
     holder.className = "attachment-holder";
     holder.innerHTML = '<span class="attachment-preview-fallback spin">&#9696;</span>';
     content.append(holder);
-    hydrateAttachment(holder, attachment);
+    hydrateAttachment(holder, attachment, message);
   });
 
   const reactionTarget = reactionTargetFor(message);
@@ -2697,7 +2707,7 @@ async function deleteMessage(message) {
   await loadWorkspace(false);
 }
 
-async function hydrateAttachment(holder, attachment) {
+async function hydrateAttachment(holder, attachment, message) {
   try {
     let url = state.attachmentUrls.get(attachment.path);
     if (!url) {
@@ -2732,6 +2742,17 @@ async function hydrateAttachment(holder, attachment) {
       label.textContent = `${attachment.name} - ${formatBytes(attachment.size)}`;
       wrap.append(video, label);
       holder.append(wrap);
+    } else if (attachment.kind === "audio" || String(attachment.type || "").startsWith("audio/")) {
+      const wrap = document.createElement("div");
+      wrap.className = "audio-attachment";
+      const audio = document.createElement("audio");
+      audio.src = url;
+      audio.controls = true;
+      audio.preload = "metadata";
+      const label = document.createElement("span");
+      label.textContent = `${attachment.name || "Voice message"} - ${formatBytes(attachment.size)}`;
+      wrap.append(audio, label);
+      holder.append(wrap);
     } else {
       const link = document.createElement("a");
       link.className = "file-attachment";
@@ -2747,9 +2768,218 @@ async function hydrateAttachment(holder, attachment) {
       link.append(copy);
       holder.append(link);
     }
+
+    const controls = document.createElement("div");
+    controls.className = "attachment-controls";
+    const download = document.createElement("a");
+    download.className = "attachment-control";
+    download.href = url;
+    download.download = attachment.name || "vine-connect-file";
+    download.setAttribute("aria-label", `Download ${attachment.name || "attachment"}`);
+    download.textContent = "Download";
+    controls.append(download);
+
+    const authorId = message?.author_id || message?.sender_id;
+    if (authorId === currentSession?.user?.id || currentProfile?.role === "admin") {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attachment-control attachment-delete";
+      remove.setAttribute("aria-label", `Delete ${attachment.name || "attachment"}`);
+      remove.textContent = "Delete file";
+      remove.addEventListener("click", () => deleteMessageAttachment(message, attachment, remove));
+      controls.append(remove);
+    }
+    holder.append(controls);
   } catch (_error) {
     holder.innerHTML = `<div class="file-attachment disabled"><span class="file-icon">!</span><span><strong>${escapeHtml(attachment.name || "Attachment")}</strong><small>Could not load this private file</small></span></div>`;
   }
+}
+
+async function deleteMessageAttachment(message, attachment, button) {
+  if (!message?.id || !attachment?.path) return;
+  if (!window.confirm(`Delete ${attachment.name || "this file"} permanently?`)) return;
+  const messageType = message.sender_id ? "direct" : "channel";
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = "Deleting...";
+
+  try {
+    try {
+      await apiRequest(`/messages/${messageType}/${encodeURIComponent(message.id)}/attachments`, {
+        method: "DELETE",
+        body: { attachmentId: attachment.id, path: attachment.path },
+      });
+    } catch (apiError) {
+      if (![404, 503].includes(apiError.status) || (message.author_id || message.sender_id) !== currentSession?.user?.id) throw apiError;
+      const table = messageType === "direct" ? "direct_messages" : "messages";
+      const attachments = (Array.isArray(message.attachments) ? message.attachments : [])
+        .filter((item) => item.id !== attachment.id && item.path !== attachment.path);
+      const { error: storageError } = await supabaseClient.storage.from(STORAGE_BUCKET).remove([attachment.path]);
+      if (storageError) throw storageError;
+      const shouldDeleteMessage = !attachments.length && !String(message.body || "").trim();
+      const { error } = shouldDeleteMessage
+        ? await supabaseClient.from(table).delete().eq("id", message.id)
+        : await supabaseClient.from(table).update({ attachments }).eq("id", message.id);
+      if (error) throw error;
+    }
+
+    const url = state.attachmentUrls.get(attachment.path);
+    if (url) URL.revokeObjectURL(url);
+    state.attachmentUrls.delete(attachment.path);
+    showToast("File deleted.", "success");
+    await loadWorkspace(false);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+    showToast(error.message || "The file could not be deleted.", "error");
+  }
+}
+
+function currentConversationKey() {
+  if (state.selectedDirectUserId) return `direct:${state.selectedDirectUserId}`;
+  if (state.selectedChannelId) return `channel:${state.selectedChannelId}`;
+  return "";
+}
+
+function preferredVoiceMimeType() {
+  if (!window.MediaRecorder?.isTypeSupported) return "";
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+    .find((type) => window.MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function voiceFileExtension(type) {
+  const mime = String(type || "").toLowerCase();
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("mp4")) return "m4a";
+  if (mime.includes("mpeg")) return "mp3";
+  return "webm";
+}
+
+function formatVoiceElapsed(seconds) {
+  const safeSeconds = Math.max(0, Math.min(MAX_VOICE_SECONDS, Math.floor(seconds || 0)));
+  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`;
+}
+
+function updateVoiceRecordingUi() {
+  const recording = state.voiceRecording;
+  const panel = $("#voice-recorder");
+  const recordButton = $("#record-voice-message");
+  if (!panel || !recordButton) return;
+  panel.hidden = !recording;
+  recordButton.classList.toggle("recording", Boolean(recording));
+  recordButton.setAttribute("aria-pressed", recording ? "true" : "false");
+  if (recording) {
+    const elapsed = (Date.now() - recording.startedAt) / 1000;
+    $("#voice-recording-time").textContent = formatVoiceElapsed(elapsed);
+  } else {
+    $("#voice-recording-time").textContent = "0:00";
+  }
+}
+
+async function startVoiceRecording() {
+  if (state.voiceRecording || state.voiceCapturePending || state.busy) return;
+  const conversationKey = currentConversationKey();
+  if (!conversationKey || $("#message-input").disabled) return showToast("Choose a conversation where you can post first.", "error");
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    return showToast("Voice recording is not supported by this browser. Use the latest Chrome, Edge, or Safari over HTTPS.", "error");
+  }
+
+  const captureToken = ++state.voiceCaptureToken;
+  state.voiceCapturePending = true;
+  updateSendState();
+  let capturedStream = null;
+  let recording = null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    capturedStream = stream;
+    if (captureToken !== state.voiceCaptureToken || conversationKey !== currentConversationKey() || !currentSession) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
+    const mimeType = preferredVoiceMimeType();
+    const recorder = new window.MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recording = {
+      recorder,
+      stream,
+      chunks: [],
+      startedAt: Date.now(),
+      timer: null,
+      cancelled: false,
+      silentCancel: false,
+      mimeType: mimeType || recorder.mimeType || "audio/webm",
+    };
+    state.voiceRecording = recording;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) recording.chunks.push(event.data);
+    });
+    recorder.addEventListener("error", () => {
+      recording.cancelled = true;
+      showToast("The microphone recording stopped unexpectedly. Please try again.", "error");
+      stopVoiceRecording(true, true);
+    });
+    recorder.addEventListener("stop", async () => {
+      if (recording.timer) window.clearInterval(recording.timer);
+      recording.stream.getTracks().forEach((track) => track.stop());
+      if (state.voiceRecording === recording) state.voiceRecording = null;
+      updateVoiceRecordingUi();
+      updateSendState();
+      if (recording.cancelled) {
+        if (!recording.silentCancel) showToast("Voice recording discarded.");
+        return;
+      }
+      const type = recording.mimeType || recording.chunks[0]?.type || "audio/webm";
+      const blob = new Blob(recording.chunks, { type });
+      if (!blob.size) return showToast("No audio was captured. Check your microphone and try again.", "error");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const file = new File([blob], `voice-message-${stamp}.${voiceFileExtension(type)}`, { type, lastModified: Date.now() });
+      await queueFiles([file]);
+      showToast("Voice message ready. Press Send to share it.", "success");
+    });
+    recorder.start(250);
+    capturedStream = null;
+    recording.timer = window.setInterval(() => {
+      updateVoiceRecordingUi();
+      if ((Date.now() - recording.startedAt) / 1000 >= MAX_VOICE_SECONDS) {
+        stopVoiceRecording(false, true);
+        showToast("The 5-minute voice-message limit was reached. Press Send to share it.");
+      }
+    }, 250);
+    updateVoiceRecordingUi();
+  } catch (error) {
+    capturedStream?.getTracks().forEach((track) => track.stop());
+    if (recording) {
+      if (recording.timer) window.clearInterval(recording.timer);
+      recording.stream.getTracks().forEach((track) => track.stop());
+      if (state.voiceRecording === recording) state.voiceRecording = null;
+      updateVoiceRecordingUi();
+    }
+    if (captureToken !== state.voiceCaptureToken) return;
+    const denied = error?.name === "NotAllowedError" || error?.name === "SecurityError";
+    showToast(denied
+      ? "Microphone access was blocked. Allow microphone access for Vine Connect, then try again."
+      : "Vine Connect could not start your microphone. Check that it is connected and not in use.", "error");
+  } finally {
+    if (captureToken === state.voiceCaptureToken) state.voiceCapturePending = false;
+    updateSendState();
+  }
+}
+
+function stopVoiceRecording(cancelled = false, silent = false) {
+  state.voiceCaptureToken += 1;
+  state.voiceCapturePending = false;
+  const recording = state.voiceRecording;
+  if (!recording) {
+    updateVoiceRecordingUi();
+    updateSendState();
+    return;
+  }
+  recording.cancelled = recording.cancelled || cancelled;
+  recording.silentCancel = recording.silentCancel || silent;
+  if (recording.recorder.state !== "inactive") recording.recorder.stop();
 }
 
 async function queueFiles(fileList) {
@@ -2824,7 +3054,7 @@ function renderPendingFiles() {
     } else {
       const icon = document.createElement("span");
       icon.className = "attachment-preview-fallback";
-      icon.textContent = file.type.startsWith("video/") ? ">" : "DOC";
+      icon.textContent = file.type.startsWith("audio/") ? "MIC" : file.type.startsWith("video/") ? ">" : "DOC";
       item.append(icon);
     }
     const copy = document.createElement("span");
@@ -2855,7 +3085,7 @@ function removePendingFile(id) {
 async function sendMessage(scheduledFor = null) {
   const body = $("#message-input").value.trim();
   const hasConversation = Boolean(state.selectedChannelId || state.selectedDirectUserId);
-  if ((!body && !state.pendingFiles.length) || !hasConversation || state.busy) return;
+  if ((!body && !state.pendingFiles.length) || !hasConversation || state.busy || state.voiceRecording || state.voiceCapturePending) return;
   state.busy = true;
   updateSendState();
   const button = $("#send-message");
@@ -2884,7 +3114,7 @@ async function sendMessage(scheduledFor = null) {
       if (error) throw error;
       attachments.push({
         id: makeId(), path, name: file.name, size: file.size, type: file.type || "application/octet-stream",
-        kind: file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : "file",
+        kind: file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "file",
       });
     }
 
@@ -4016,6 +4246,7 @@ async function sendHeartbeat() {
 }
 
 function openScheduleMessageModal() {
+  if (state.voiceRecording || state.voiceCapturePending) return showToast("Stop the voice recording before scheduling this message.", "error");
   if (!$("#message-input").value.trim() && !state.pendingFiles.length) return showToast("Write a message or attach a file first.", "error");
   if (!state.selectedChannelId && !state.selectedDirectUserId) return;
   const date = new Date(Date.now() + 30 * 60 * 1000);
@@ -4278,7 +4509,14 @@ function closeSidebar() {
 function updateSendState() {
   const hasContent = Boolean($("#message-input")?.value.trim() || state.pendingFiles.length);
   const hasConversation = Boolean(state.selectedChannelId || state.selectedDirectUserId);
-  $("#send-message").disabled = !hasContent || !hasConversation || state.busy;
+  const voiceBusy = Boolean(state.voiceRecording || state.voiceCapturePending);
+  $("#send-message").disabled = !hasContent || !hasConversation || state.busy || voiceBusy;
+  const recordButton = $("#record-voice-message");
+  if (recordButton) {
+    recordButton.disabled = !hasConversation || $("#message-input")?.disabled || state.busy || voiceBusy;
+    recordButton.title = state.voiceCapturePending ? "Waiting for microphone permission" : state.voiceRecording ? "Voice message is recording" : "Record a voice message";
+  }
+  updateVoiceRecordingUi();
 }
 
 function applySavedTheme() {

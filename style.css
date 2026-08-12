@@ -163,12 +163,30 @@ kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; b
 .video-attachment { max-width: 440px; margin-top: 9px; color: #656066; font-size: 10px; }
 .video-attachment video { display: block; width: 100%; max-height: 310px; border-radius: 10px; background: #171319; }
 .video-attachment span { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
+.audio-attachment { width: min(420px, 100%); margin-top: 9px; padding: 10px 12px; border: 1px solid #d8e3db; border-radius: 10px; background: #f7faf8; }
+.audio-attachment audio { display: block; width: 100%; height: 38px; }
+.audio-attachment span { display: block; margin-top: 7px; color: #656066; font-size: 10px; }
+.attachment-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.attachment-control { min-height: 27px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #cbd8cf; border-radius: 6px; padding: 0 9px; color: #24583e; background: #fff; text-decoration: none; cursor: pointer; font: inherit; font-size: 9px; font-weight: 750; }
+.attachment-control:hover { border-color: #287a50; background: #edf6f0; }
+.attachment-delete { color: #9a3042; border-color: #e4c0c6; }
+.attachment-delete:hover { border-color: #bd5364; background: #fff1f3; }
 
 .composer-wrap { position: relative; padding: 8px 20px 12px; background: #fff; }
 .composer { border: 1px solid #a9a5aa; border-radius: 9px; overflow: hidden; background: #fff; box-shadow: 0 1px 0 rgba(0,0,0,.02); }
 .composer:focus-within { border-color: #6c6870; box-shadow: 0 0 0 1px #6c6870; }
 .composer textarea { display: block; width: 100%; min-height: 46px; max-height: 130px; resize: none; border: 0; outline: 0; padding: 11px 13px 4px; color: var(--ink); background: transparent; font-size: 13px; line-height: 1.4; }
 .composer textarea::placeholder { color: #8b878d; }
+.voice-recorder { display: grid; grid-template-columns: 10px auto 1fr auto auto; align-items: center; gap: 8px; min-height: 42px; margin: 8px 9px 0; padding: 6px 7px 6px 10px; border: 1px solid #dfbcc2; border-radius: 8px; color: #7f2938; background: #fff5f6; font-size: 10px; }
+.voice-recorder[hidden] { display: none; }
+.voice-recorder strong { font-size: 10px; }
+.voice-recorder time { color: #9a4c59; font-variant-numeric: tabular-nums; }
+.voice-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: #cf334d; box-shadow: 0 0 0 0 rgba(207,51,77,.35); animation: voice-pulse 1.3s infinite; }
+@keyframes voice-pulse { 70% { box-shadow: 0 0 0 6px rgba(207,51,77,0); } 100% { box-shadow: 0 0 0 0 rgba(207,51,77,0); } }
+.voice-recorder button { min-height: 27px; border: 1px solid #cf8995; border-radius: 6px; padding: 0 9px; color: #7f2938; background: #fff; cursor: pointer; font-size: 9px; font-weight: 760; }
+.voice-recorder button:hover { background: #ffe8ec; }
+.voice-recorder .voice-cancel-button { color: #625d63; border-color: #d7d2d8; }
+.format-tools button.recording { color: #b52d44; background: #ffebee; }
 .composer-tools { min-height: 38px; display: flex; align-items: center; padding: 2px 7px 5px; }
 .format-tools { display: flex; align-items: center; gap: 1px; }
 .format-tools button { width: 31px; height: 29px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #646066; cursor: pointer; }
@@ -281,7 +299,8 @@ body[data-theme="dark"] .message-content > p { color: #dde9e2; }
 body[data-theme="dark"] .channel-identity p,
 body[data-theme="dark"] .file-attachment small,
 body[data-theme="dark"] .image-attachment,
-body[data-theme="dark"] .video-attachment { color: #9aada2; }
+body[data-theme="dark"] .video-attachment,
+body[data-theme="dark"] .audio-attachment span { color: #9aada2; }
 body[data-theme="dark"] .member-stack,
 body[data-theme="dark"] .composer,
 body[data-theme="dark"] .file-attachment,
@@ -293,6 +312,13 @@ body[data-theme="dark"] .pending-file,
 body[data-theme="dark"] .modal input,
 body[data-theme="dark"] .modal select,
 body[data-theme="dark"] .search-field kbd { background: #17241d; color: #edf5f0; }
+body[data-theme="dark"] .audio-attachment { border-color: #354d41; background: #14271e; }
+body[data-theme="dark"] .attachment-control { color: #c8ead5; border-color: #3f7056; background: #173627; }
+body[data-theme="dark"] .attachment-delete { color: #f1aeb9; border-color: #74404a; background: #321c21; }
+body[data-theme="dark"] .voice-recorder { color: #f0b4be; border-color: #74404a; background: #321c21; }
+body[data-theme="dark"] .voice-recorder time { color: #d994a0; }
+body[data-theme="dark"] .voice-recorder button { color: #ffdce2; border-color: #85505a; background: #43242b; }
+body[data-theme="dark"] .voice-recorder .voice-cancel-button { color: #d7e3dc; border-color: #52655a; background: #1b2d23; }
 body[data-theme="dark"] .intro-hash,
 body[data-theme="dark"] .empty-icon,
 body[data-theme="dark"] .modal-icon,
