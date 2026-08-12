@@ -11,13 +11,13 @@
   <title>Vine Connect | Vine Solutions</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="vine-solutions-logo.png">
-  <link rel="stylesheet" href="style.css?v=20260812-4">
+  <link rel="stylesheet" href="style.css?v=20260812-6">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.29.0/index.js"></script>
   <script type="module" src="flag-polyfill.js"></script>
   <script src="supabase-config.js" defer></script>
   <script type="module" src="modern/modern-tools.js?v=20260812-1"></script>
-  <script src="app.js?v=20260812-4" defer></script>
+  <script src="app.js?v=20260812-6" defer></script>
 </head>
 <body>
   <section class="auth-screen" id="auth-screen">
@@ -132,6 +132,7 @@
             <span class="voice-recording-dot" aria-hidden="true"></span>
             <strong>Recording voice message</strong>
             <time id="voice-recording-time">0:00</time>
+            <span class="voice-input-meter" id="voice-input-meter" title="Microphone input level" aria-label="Microphone input level"><i></i></span>
             <button id="stop-voice-message" type="button">Stop</button>
             <button id="cancel-voice-message" class="voice-cancel-button" type="button">Cancel</button>
           </div>
@@ -140,6 +141,13 @@
             <div class="format-tools">
               <button id="attach-files" type="button" aria-label="Attach files"><i class="glyph glyph-button">+</i></button>
               <button id="record-voice-message" type="button" aria-label="Record a voice message" title="Record a voice message"><i class="glyph">&#127897;</i></button>
+              <label class="voice-device-control" for="voice-microphone-select">
+                <span>Microphone</span>
+                <select id="voice-microphone-select" aria-label="Choose microphone" title="Choose the microphone used for voice messages">
+                  <option value="">Default microphone</option>
+                </select>
+              </label>
+              <button id="refresh-microphones" type="button" aria-label="Refresh microphones" title="Allow access and refresh microphone list"><i class="glyph">&#8635;</i></button>
               <span class="tool-divider"></span>
               <button id="format-bold" type="button" aria-label="Bold" title="Bold"><b>B</b></button>
               <button id="format-italic" type="button" aria-label="Italic" title="Italic"><i>I</i></button>
@@ -481,6 +489,12 @@
       <div class="meeting-setup-note" id="meeting-setup-note" hidden>
         <strong>Meeting schedule setup needed</strong>
         <span>Ask an admin to run <code>vine-connect-meetings-update.sql</code> in Supabase. Instant meetings still work.</span>
+      </div>
+      <div class="google-meet-status" id="google-meet-status">
+        <span class="google-meet-status-icon" aria-hidden="true">G</span>
+        <div><strong id="google-meet-status-title">Checking Google Meet...</strong><span id="google-meet-status-detail">Please wait.</span></div>
+        <button class="primary-button compact-button" id="connect-google-meet" type="button" hidden>Connect Google account</button>
+        <button class="secondary-button compact-button" id="disconnect-google-meet" type="button" hidden>Disconnect</button>
       </div>
       <div class="meeting-summary" aria-label="Meeting summary">
         <div><strong id="meeting-today-count">0</strong><span>Today</span></div>

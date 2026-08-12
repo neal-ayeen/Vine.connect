@@ -177,20 +177,26 @@ kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; b
 .composer:focus-within { border-color: #6c6870; box-shadow: 0 0 0 1px #6c6870; }
 .composer textarea { display: block; width: 100%; min-height: 46px; max-height: 130px; resize: none; border: 0; outline: 0; padding: 11px 13px 4px; color: var(--ink); background: transparent; font-size: 13px; line-height: 1.4; }
 .composer textarea::placeholder { color: #8b878d; }
-.voice-recorder { display: grid; grid-template-columns: 10px auto 1fr auto auto; align-items: center; gap: 8px; min-height: 42px; margin: 8px 9px 0; padding: 6px 7px 6px 10px; border: 1px solid #dfbcc2; border-radius: 8px; color: #7f2938; background: #fff5f6; font-size: 10px; }
+.voice-recorder { display: grid; grid-template-columns: 10px auto auto minmax(70px,1fr) auto auto; align-items: center; gap: 8px; min-height: 42px; margin: 8px 9px 0; padding: 6px 7px 6px 10px; border: 1px solid #dfbcc2; border-radius: 8px; color: #7f2938; background: #fff5f6; font-size: 10px; }
 .voice-recorder[hidden] { display: none; }
 .voice-recorder strong { font-size: 10px; }
 .voice-recorder time { color: #9a4c59; font-variant-numeric: tabular-nums; }
 .voice-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: #cf334d; box-shadow: 0 0 0 0 rgba(207,51,77,.35); animation: voice-pulse 1.3s infinite; }
 @keyframes voice-pulse { 70% { box-shadow: 0 0 0 6px rgba(207,51,77,0); } 100% { box-shadow: 0 0 0 0 rgba(207,51,77,0); } }
+.voice-input-meter { height: 7px; overflow: hidden; border-radius: 999px; background: #e8cfd4; }
+.voice-input-meter i { display: block; width: 3%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #298252, #e2ac2d 72%, #cf334d); transition: width .08s linear; }
 .voice-recorder button { min-height: 27px; border: 1px solid #cf8995; border-radius: 6px; padding: 0 9px; color: #7f2938; background: #fff; cursor: pointer; font-size: 9px; font-weight: 760; }
 .voice-recorder button:hover { background: #ffe8ec; }
 .voice-recorder .voice-cancel-button { color: #625d63; border-color: #d7d2d8; }
 .format-tools button.recording { color: #b52d44; background: #ffebee; }
 .composer-tools { min-height: 38px; display: flex; align-items: center; padding: 2px 7px 5px; }
-.format-tools { display: flex; align-items: center; gap: 1px; }
+.format-tools { min-width: 0; flex: 1; display: flex; align-items: center; gap: 1px; overflow-x: auto; scrollbar-width: thin; }
 .format-tools button { width: 31px; height: 29px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #646066; cursor: pointer; }
 .format-tools button:hover { color: #2d292e; background: #f1eff2; }
+.voice-device-control { display: flex; align-items: center; margin-left: 2px; }
+.voice-device-control > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.voice-device-control select { width: 154px; height: 27px; border: 1px solid #d5d0d6; border-radius: 6px; padding: 0 23px 0 7px; color: #59545a; background: #fff; font-size: 9px; cursor: pointer; }
+.voice-device-control select:disabled { opacity: .58; cursor: default; }
 .tool-divider { width: 1px; height: 18px; margin: 0 4px; background: var(--line); }
 .send-button { margin-left: auto; width: 34px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px; color: #fff; background: var(--green); cursor: pointer; }
 .send-button:hover:not(:disabled) { background: #146b4b; }
@@ -200,6 +206,8 @@ kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; b
 .pending-files { display: flex; gap: 7px; padding: 9px 10px 2px; overflow-x: auto; }
 .pending-file { min-width: 180px; max-width: 230px; height: 49px; display: grid; grid-template-columns: 33px minmax(0,1fr) 22px; align-items: center; gap: 7px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; background: #f9f8f9; }
 .pending-file img { width: 33px; height: 33px; border-radius: 5px; object-fit: cover; }
+.pending-file.pending-audio { min-width: 310px; max-width: 380px; height: auto; }
+.pending-file.pending-audio audio { grid-column: 1 / -1; width: 100%; height: 32px; }
 .pending-file > span { min-width: 0; display: flex; flex-direction: column; }
 .pending-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .pending-file small { color: var(--muted); font-size: 9px; }
@@ -317,8 +325,10 @@ body[data-theme="dark"] .attachment-control { color: #c8ead5; border-color: #3f7
 body[data-theme="dark"] .attachment-delete { color: #f1aeb9; border-color: #74404a; background: #321c21; }
 body[data-theme="dark"] .voice-recorder { color: #f0b4be; border-color: #74404a; background: #321c21; }
 body[data-theme="dark"] .voice-recorder time { color: #d994a0; }
+body[data-theme="dark"] .voice-input-meter { background: #58313a; }
 body[data-theme="dark"] .voice-recorder button { color: #ffdce2; border-color: #85505a; background: #43242b; }
 body[data-theme="dark"] .voice-recorder .voice-cancel-button { color: #d7e3dc; border-color: #52655a; background: #1b2d23; }
+body[data-theme="dark"] .voice-device-control select { color: #dce9e1; border-color: #3b5145; background: #17241d; }
 body[data-theme="dark"] .intro-hash,
 body[data-theme="dark"] .empty-icon,
 body[data-theme="dark"] .modal-icon,
@@ -354,6 +364,14 @@ body[data-theme="dark"] .ring-header-button { color: #efd887 !important; border-
   .message-row { padding-left: 13px; padding-right: 13px; }
   .channel-intro { padding: 34px 17px 22px; }
   .composer-wrap { padding: 7px 10px 10px; }
+  .voice-recorder { grid-template-columns: 10px minmax(0,1fr) auto auto; }
+  .voice-recorder .voice-recording-dot { grid-column: 1; grid-row: 1; }
+  .voice-recorder strong { grid-column: 2; grid-row: 1; }
+  .voice-recorder time { grid-column: 2; grid-row: 2; }
+  .voice-recorder .voice-input-meter { grid-column: 3 / 5; grid-row: 2; }
+  .voice-recorder #stop-voice-message { grid-column: 3; grid-row: 1; }
+  .voice-recorder #cancel-voice-message { grid-column: 4; grid-row: 1; }
+  .voice-device-control select { width: 112px; }
   .tool-divider { display: none; }
   .composer-hint { display: none; }
   .drop-overlay { inset: 0 9px 9px; }
@@ -371,6 +389,7 @@ body[data-theme="dark"] .ring-header-button { color: #efd887 !important; border-
   .own-message .message-content { padding-right: 152px; }
   .modal { padding: 24px 20px; }
   .pending-file { min-width: 160px; }
+  .pending-file.pending-audio { min-width: 270px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -724,6 +743,36 @@ body[data-theme="dark"] .file-library-setup code { background: rgba(0,0,0,.24); 
 .meetings-hub-head p { margin: 0; color: var(--muted); font-size: 11px; }
 .meetings-hub-actions { display: flex; flex: 0 0 auto; gap: 8px; }
 .meetings-hub-actions button { width: auto; min-height: 38px; margin: 0; padding: 0 14px; }
+.google-meet-status { display: grid; grid-template-columns: 36px minmax(0,1fr) auto; align-items: center; gap: 11px; margin-top: 18px; padding: 11px 13px; border: 1px solid #d8b352; border-radius: 10px; background: #fffaf0; }
+.google-meet-status.connected { border-color: #abd5bb; background: #f2faf5; }
+.google-meet-status-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; color: #fff; background: #287a50; font-size: 16px; font-weight: 900; }
+.google-meet-status > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.google-meet-status strong { font-size: 10px; }
+.google-meet-status span { color: var(--muted); font-size: 8px; }
+.google-meet-status button { width: auto; min-height: 32px; margin: 0; }
+.google-meet-channel { width: min(980px, calc(100% - 34px)); margin: 22px auto; }
+.google-meet-channel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(135deg, var(--surface), var(--surface-soft)); }
+.google-meet-channel-head h2 { margin: 5px 0; font-size: 24px; }
+.google-meet-channel-head p { max-width: 570px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.google-meet-channel-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.google-meet-channel-actions button { width: auto; min-height: 38px; margin: 0; }
+.google-meet-inline-status { display: flex; flex-direction: column; gap: 3px; margin: 13px 0; padding: 12px 14px; border: 1px solid #d8b352; border-radius: 10px; color: #72570e; background: #fff7df; }
+.google-meet-inline-status.connected { border-color: #abd5bb; color: #185a3b; background: #f2faf5; }
+.google-meet-inline-status strong { font-size: 10px; }
+.google-meet-inline-status span { font-size: 8px; }
+.google-meet-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0 8px; }
+.google-meet-list-heading h3 { margin: 0; font-size: 13px; }
+.google-meet-list-heading span { color: var(--muted); font-size: 8px; }
+.google-meet-space-list { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.google-meet-space { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 10px; min-height: 66px; padding: 10px 13px; border-bottom: 1px solid var(--line); }
+.google-meet-space:last-child { border-bottom: 0; }
+.google-meet-space:hover { background: var(--surface-soft); }
+.google-meet-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #e6f4ea; }
+.google-meet-space > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.google-meet-space strong, .google-meet-space span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.google-meet-space strong { font-size: 10px; }
+.google-meet-space span { color: var(--muted); font-size: 8px; }
+.google-meet-space a { width: auto; min-height: 32px; margin: 0; text-decoration: none; }
 .meeting-setup-note { display: flex; flex-direction: column; gap: 4px; margin-top: 18px; padding: 12px 14px; border: 1px solid #d8b352; border-radius: 9px; color: #72570e; background: #fff7df; font-size: 10px; }
 .meeting-setup-note code { padding: 1px 4px; border-radius: 4px; background: rgba(255,255,255,.76); }
 .meeting-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 21px; }
@@ -776,6 +825,11 @@ body[data-theme="dark"] .file-library-setup code { background: rgba(0,0,0,.24); 
 
 body[data-theme="dark"] .meeting-setup-note { border-color: #705b28; color: #e6cf91; background: #2a2413; }
 body[data-theme="dark"] .meeting-setup-note code { background: rgba(0,0,0,.24); }
+body[data-theme="dark"] .google-meet-status,
+body[data-theme="dark"] .google-meet-inline-status { border-color: #705b28; color: #e6cf91; background: #2a2413; }
+body[data-theme="dark"] .google-meet-status.connected,
+body[data-theme="dark"] .google-meet-inline-status.connected { border-color: #395d49; color: #b9dfc7; background: #14261c; }
+body[data-theme="dark"] .google-meet-icon { background: #1e3828; }
 body[data-theme="dark"] .meeting-summary > div,
 body[data-theme="dark"] .meeting-list-section,
 body[data-theme="dark"] .meeting-invite-option { border-color: #30483b; background: #121f18; }
@@ -797,6 +851,9 @@ body[data-theme="dark"] .meeting-card-avatars .mini-avatar { border-color: #121f
   .meetings-hub-actions button { flex: 1; }
   .meetings-columns { grid-template-columns: 1fr; }
   .meeting-list { max-height: 310px; }
+  .google-meet-channel-head { flex-direction: column; }
+  .google-meet-channel-actions { width: 100%; }
+  .google-meet-channel-actions button { flex: 1; }
 }
 
 @media (max-width: 520px) {
@@ -806,6 +863,11 @@ body[data-theme="dark"] .meeting-card-avatars .mini-avatar { border-color: #121f
   .meeting-card-actions { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
   .meeting-invite-list { grid-template-columns: 1fr; }
   .meeting-time-fields { grid-template-columns: 1fr; }
+  .google-meet-status { grid-template-columns: 36px minmax(0,1fr); }
+  .google-meet-status button { grid-column: 1 / -1; }
+  .google-meet-channel { width: calc(100% - 20px); margin: 10px auto; }
+  .google-meet-channel-head { padding: 16px; }
+  .google-meet-channel-actions { flex-direction: column; }
 }
 
 /* 2026 platform upgrade: PWA, presence, permissions, search, files and CRM */

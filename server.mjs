@@ -8,6 +8,7 @@ import { rateLimit } from "express-rate-limit";
 import jwt from "jsonwebtoken";
 import { createClient } from "@supabase/supabase-js";
 import { registerPlatformApi } from "./server/platform-api.mjs";
+import { googleMeetConfiguration } from "./server/google-meet-api.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 3000);
@@ -91,12 +92,15 @@ const meetingLimiter = rateLimit({
 
 app.get("/api/health", (_request, response) => {
   const jaas = jaasConfiguration();
+  const googleMeet = googleMeetConfiguration();
   response.json({
     ok: true,
     service: "vine-connect",
     supabaseConfigured: missing(requiredSupabase).length === 0,
     jaasConfigured: jaas.ready,
     jaasStatus: jaas.status,
+    googleMeetConfigured: googleMeet.ready,
+    googleMeetMissing: googleMeet.missing,
     pushConfigured: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
   });
 });

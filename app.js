@@ -5,6 +5,7 @@ const MAX_VIDEO_SECONDS = 120;
 const MAX_VOICE_SECONDS = 5 * 60;
 const STORAGE_BUCKET = "chat-files";
 const RING_DURATION_MS = 30 * 1000;
+const MICROPHONE_STORAGE_KEY = "vine-connect-microphone";
 
 const state = {
   channels: [],
@@ -33,6 +34,10 @@ const state = {
   meetingParticipants: [],
   meetingsReady: false,
   activeMeetingRecord: null,
+  googleMeetStatus: { loaded: false, configured: false, connected: false, missing: [] },
+  googleMeetSpaces: [],
+  googleMeetLoadedAt: 0,
+  googleMeetingBusy: false,
   platformReady: false,
   channelMembers: [],
   bookmarks: [],
@@ -117,10 +122,34 @@ async function init() {
   const { data, error } = await supabaseClient.auth.getSession();
   if (error) showLoginError(error.message);
   await syncSession(data?.session || null);
+  await handleGoogleOAuthReturn();
 
   supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
     window.setTimeout(() => syncSession(nextSession), 0);
   });
+}
+
+async function handleGoogleOAuthReturn() {
+  const parameters = new URLSearchParams(window.location.search);
+  const result = parameters.get("google");
+  if (!result) return;
+  parameters.delete("google");
+  const reason = parameters.get("reason");
+  parameters.delete("reason");
+  const nextUrl = `${window.location.pathname}${parameters.toString() ? `?${parameters}` : ""}${window.location.hash}`;
+  window.history.replaceState({}, "", nextUrl);
+  if (result === "connected") {
+    state.googleMeetLoadedAt = 0;
+    await loadGoogleMeetIntegration(true);
+    if (currentSession) {
+      renderMeetingsHub();
+      const meetingsChannel = state.channels.find(isMeetingsChannel);
+      if (meetingsChannel) selectChannel(meetingsChannel.id);
+    }
+    showToast("Google Meet connected successfully.", "success");
+  } else {
+    showToast(reason || "Google Meet could not be connected.", "error");
+  }
 }
 
 function bindEvents() {
@@ -154,6 +183,13 @@ function bindEvents() {
   $("#record-voice-message").addEventListener("click", startVoiceRecording);
   $("#stop-voice-message").addEventListener("click", () => stopVoiceRecording(false));
   $("#cancel-voice-message").addEventListener("click", () => stopVoiceRecording(true));
+  $("#voice-microphone-select").addEventListener("change", (event) => {
+    const deviceId = event.target.value;
+    if (deviceId) localStorage.setItem(MICROPHONE_STORAGE_KEY, deviceId);
+    else localStorage.removeItem(MICROPHONE_STORAGE_KEY);
+  });
+  $("#refresh-microphones").addEventListener("click", () => loadMicrophoneDevices(true));
+  navigator.mediaDevices?.addEventListener?.("devicechange", () => loadMicrophoneDevices(false));
   $("#file-input").addEventListener("change", (event) => queueFiles(event.target.files));
   $("#library-file-input").addEventListener("change", (event) => uploadLibraryFiles(event.target.files));
   $("#focus-composer").addEventListener("click", () => $("#message-input").focus());
@@ -185,6 +221,8 @@ function bindEvents() {
   });
   $("#open-schedule-meeting").addEventListener("click", openScheduleMeeting);
   $("#schedule-meeting-form").addEventListener("submit", scheduleMeeting);
+  $("#connect-google-meet").addEventListener("click", connectGoogleMeet);
+  $("#disconnect-google-meet").addEventListener("click", disconnectGoogleMeet);
   $("#open-ring-direct").addEventListener("click", () => sendMemberRing(state.selectedDirectUserId));
   $("#leave-meeting").addEventListener("click", closeMeeting);
   $("#open-pins-sidebar").addEventListener("click", openPinnedMessages);
@@ -363,6 +401,7 @@ async function syncSession(session) {
   loadViewState();
   $("#auth-screen").hidden = true;
   $("#app").hidden = false;
+  loadMicrophoneDevices(false);
   applyProfile();
   await loadWorkspace(true);
   subscribeRealtime();
@@ -488,6 +527,7 @@ async function loadWorkspace(scrollToBottom = false) {
   state.deletedMessageHistory = deletedHistoryResult.error ? [] : (deletedHistoryResult.data || []);
   state.fileFavorites = fileFavoritesResult.error ? [] : (fileFavoritesResult.data || []);
   state.fileVersions = fileVersionsResult.error ? [] : (fileVersionsResult.data || []);
+  await loadGoogleMeetIntegration();
 
   if (state.selectedDirectUserId && !state.members.some((member) => member.id === state.selectedDirectUserId)) {
     state.selectedDirectUserId = null;
@@ -649,6 +689,7 @@ function channelButton(channel, unreadCount = 0) {
 }
 
 function channelGlyph(channel) {
+  if (isMeetingsChannel(channel)) return "&#127909;";
   if (channel.channel_type === "files") return "&#128193;";
   if (channel.visibility === "private") return "&#128274;";
   if (channel.posting_policy === "admins") return "&#128227;";
@@ -868,6 +909,11 @@ function renderConversation(scrollToBottom = false) {
 
   if (channel.channel_type === "files") {
     renderFileLibrary(channel);
+    return;
+  }
+
+  if (isMeetingsChannel(channel)) {
+    renderGoogleMeetChannel(channel);
     return;
   }
 
@@ -1489,6 +1535,16 @@ function getMeetingContext() {
 
   const channel = state.channels.find((item) => item.id === state.selectedChannelId);
   if (!channel) return null;
+  if (channel.channel_type === "files") {
+    return {
+      roomName: `VineConnectWorkspace${currentSession.user.id.replace(/[^a-z0-9]/gi, "")}`,
+      title: "Vine Solutions meeting",
+      scope: "workspace",
+      channelId: null,
+      directUserId: null,
+      participantIds: state.members.map((member) => member.id),
+    };
+  }
   return {
     roomName: `VineConnectChannel${channel.id.replace(/[^a-z0-9]/gi, "")}`,
     title: `#${channel.name} meeting`,
@@ -1497,6 +1553,200 @@ function getMeetingContext() {
     directUserId: null,
     participantIds: state.members.map((member) => member.id),
   };
+}
+
+function isMeetingsChannel(channel) {
+  return Boolean(channel && !channel.parent_id && String(channel.name || "").toLowerCase() === "meetings");
+}
+
+async function loadGoogleMeetIntegration(force = false) {
+  if (!currentSession || !/^https?:$/.test(window.location.protocol)) return;
+  if (!force && state.googleMeetLoadedAt && Date.now() - state.googleMeetLoadedAt < 60 * 1000) return;
+  try {
+    const status = await apiRequest("/google/status");
+    state.googleMeetStatus = { loaded: true, configured: false, connected: false, missing: [], ...status };
+    if (status.connected) {
+      const spaces = await apiRequest("/google/meetings");
+      state.googleMeetSpaces = spaces.meetings || [];
+    } else {
+      state.googleMeetSpaces = [];
+    }
+  } catch (error) {
+    state.googleMeetStatus = {
+      loaded: true,
+      configured: false,
+      connected: false,
+      missing: [],
+      error: error.message,
+    };
+    state.googleMeetSpaces = [];
+  }
+  state.googleMeetLoadedAt = Date.now();
+}
+
+async function connectGoogleMeet() {
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  const button = $("#connect-google-meet");
+  setButtonBusy(button, true, "Opening Google...");
+  try {
+    const result = await apiRequest("/google/oauth/start", { method: "POST" });
+    if (!result.authorizationUrl) throw new Error("The server did not return a Google authorization URL.");
+    window.location.assign(result.authorizationUrl);
+  } catch (error) {
+    setButtonBusy(button, false, "Connect Google account");
+    showToast(error.message, "error");
+  }
+}
+
+async function disconnectGoogleMeet() {
+  if (currentProfile?.role !== "admin" || state.busy) return;
+  if (!window.confirm("Disconnect the company Google account from Vine Connect? Existing Meet links will remain valid.")) return;
+  const button = $("#disconnect-google-meet");
+  setButtonBusy(button, true, "Disconnecting...");
+  try {
+    await apiRequest("/google/connection", { method: "DELETE" });
+    state.googleMeetLoadedAt = 0;
+    await loadGoogleMeetIntegration(true);
+    renderMeetingsHub();
+    if (isMeetingsChannel(state.channels.find((channel) => channel.id === state.selectedChannelId))) renderConversation(false);
+    showToast("Google Meet disconnected.", "success");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    setButtonBusy(button, false, "Disconnect");
+  }
+}
+
+function googleMeetingTarget(context) {
+  return {
+    title: context.title,
+    channelId: context.scope === "channel" ? context.channelId : null,
+    directUserId: context.scope === "direct" ? context.directUserId : null,
+  };
+}
+
+async function openGoogleMeeting(context) {
+  if (state.googleMeetingBusy) return;
+  state.googleMeetingBusy = true;
+  closeMeeting();
+  const popup = window.open("about:blank", "_blank");
+  if (popup) {
+    popup.opener = null;
+    popup.document.title = "Creating Google Meet...";
+    popup.document.body.style.cssText = "font:16px system-ui;padding:32px;color:#123c2a";
+    popup.document.body.textContent = "Vine Connect is creating your Google Meet...";
+  }
+  try {
+    const result = await apiRequest("/google/meetings", { method: "POST", body: googleMeetingTarget(context) });
+    const meeting = result.meeting;
+    if (!meeting?.meeting_uri) throw new Error("Google Meet did not return a meeting link.");
+    if (popup && !popup.closed) popup.location.replace(meeting.meeting_uri);
+    else showGoogleMeetingLink(meeting);
+    state.googleMeetLoadedAt = 0;
+    await loadGoogleMeetIntegration(true);
+    if (!$("#meetings-hub-modal").hidden) renderMeetingsHub();
+    if (isMeetingsChannel(state.channels.find((channel) => channel.id === state.selectedChannelId))) renderConversation(false);
+    showToast(result.deliveryWarning || "Google Meet created and shared.", result.deliveryWarning ? "error" : "success");
+  } catch (error) {
+    if (popup && !popup.closed) popup.close();
+    showToast(error.message, "error");
+  } finally {
+    state.googleMeetingBusy = false;
+  }
+}
+
+function showGoogleMeetingLink(meeting) {
+  $("#meeting-title").textContent = meeting.title || "Google Meet";
+  $("#meeting-provider").textContent = "Google Meet - open in a new tab";
+  $("#meeting-new-tab").href = meeting.meeting_uri;
+  const frame = $("#meeting-frame");
+  frame.innerHTML = `<div class="meeting-error"><strong>Your Google Meet is ready.</strong><span>Your browser blocked the new tab. Use the button below.</span><a class="primary-button compact-button" href="${escapeHtml(meeting.meeting_uri)}" target="_blank" rel="noopener noreferrer">Join Google Meet</a></div>`;
+  openModal("meeting-modal");
+}
+
+function renderGoogleMeetChannel(channel) {
+  $("#composer-wrap").hidden = true;
+  $("#open-meeting").hidden = true;
+  $("#open-pins").hidden = true;
+  $("#conversation-symbol").textContent = "🎥";
+  $("#channel-name").textContent = channel.name;
+  $("#channel-description").textContent = channel.description || "Create and join company Google Meet sessions";
+  markConversationRead("channel", channel.id);
+
+  const pane = $("#message-pane");
+  pane.replaceChildren();
+  const section = document.createElement("section");
+  section.className = "google-meet-channel";
+  const heading = document.createElement("div");
+  heading.className = "google-meet-channel-head";
+  const copy = document.createElement("div");
+  copy.innerHTML = `<span class="eyebrow">Vine Connect meetings</span><h2>Google Meet workspace</h2><p>Create a unique Google Meet link and share it automatically with this channel.</p>`;
+  const actions = document.createElement("div");
+  actions.className = "google-meet-channel-actions";
+  const start = document.createElement("button");
+  start.type = "button";
+  start.className = "primary-button compact-button";
+  start.textContent = state.googleMeetStatus.connected ? "Start Google Meet" : "Google Meet not connected";
+  start.disabled = !state.googleMeetStatus.connected || state.googleMeetingBusy;
+  start.addEventListener("click", () => openMeeting());
+  const schedule = document.createElement("button");
+  schedule.type = "button";
+  schedule.className = "secondary-button compact-button";
+  schedule.textContent = "Schedule meeting";
+  schedule.disabled = !state.meetingsReady;
+  schedule.addEventListener("click", openScheduleMeeting);
+  actions.append(start, schedule);
+  heading.append(copy, actions);
+  section.append(heading);
+
+  const status = document.createElement("div");
+  status.className = `google-meet-inline-status${state.googleMeetStatus.connected ? " connected" : ""}`;
+  if (state.googleMeetStatus.connected) {
+    status.innerHTML = `<strong>Connected to Google Meet</strong><span>${escapeHtml(state.googleMeetStatus.email || "Company Google account")}</span>`;
+  } else if (!state.googleMeetStatus.configured) {
+    status.innerHTML = `<strong>Google Meet setup required</strong><span>${escapeHtml(state.googleMeetStatus.error || "An admin must add the Google environment variables and connect a Google account.")}</span>`;
+  } else {
+    status.innerHTML = "<strong>Google account not connected</strong><span>An administrator can connect the company Google account from the Meetings window.</span>";
+  }
+  section.append(status);
+
+  const listHeading = document.createElement("div");
+  listHeading.className = "google-meet-list-heading";
+  listHeading.innerHTML = `<h3>Recent meeting links</h3><span>${state.googleMeetSpaces.length} saved</span>`;
+  section.append(listHeading);
+  const list = document.createElement("div");
+  list.className = "google-meet-space-list";
+  if (!state.googleMeetSpaces.length) {
+    list.innerHTML = '<div class="meeting-list-empty"><strong>No Google Meet links yet</strong><span>Use Start Google Meet to create the first one.</span></div>';
+  } else {
+    state.googleMeetSpaces.forEach((meeting) => list.append(renderGoogleMeetingSpace(meeting)));
+  }
+  section.append(list);
+  pane.append(section);
+  renderChannels();
+  renderDirectMessages();
+}
+
+function renderGoogleMeetingSpace(meeting) {
+  const row = document.createElement("article");
+  row.className = "google-meet-space";
+  const icon = document.createElement("span");
+  icon.className = "google-meet-icon";
+  icon.textContent = "🎥";
+  const copy = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = meeting.title || "Google Meet";
+  const meta = document.createElement("span");
+  meta.textContent = `${new Date(meeting.created_at).toLocaleString()}${meeting.meeting_code ? ` · ${meeting.meeting_code}` : ""}`;
+  copy.append(title, meta);
+  const join = document.createElement("a");
+  join.className = "primary-button compact-button";
+  join.href = meeting.meeting_uri;
+  join.target = "_blank";
+  join.rel = "noopener noreferrer";
+  join.textContent = "Join";
+  row.append(icon, copy, join);
+  return row;
 }
 
 function meetingContextFromRecord(meeting) {
@@ -1514,6 +1764,8 @@ function meetingContextFromRecord(meeting) {
 async function openMeeting(meetingRecord = null) {
   const context = meetingRecord ? meetingContextFromRecord(meetingRecord) : getMeetingContext();
   if (!context) return showToast("Open a channel or direct message first.", "error");
+
+  if (state.googleMeetStatus.connected) return openGoogleMeeting(context);
 
   closeMeeting();
   state.activeMeetingRecord = meetingRecord;
@@ -1701,6 +1953,7 @@ function updateMeetingsBadge() {
 }
 
 function renderMeetingsHub() {
+  renderGoogleMeetStatus();
   const setupNote = $("#meeting-setup-note");
   setupNote.hidden = state.meetingsReady;
   $("#open-schedule-meeting").disabled = !state.meetingsReady;
@@ -1716,6 +1969,30 @@ function renderMeetingsHub() {
   $("#meeting-past-count").textContent = String(past.length);
   renderMeetingList("upcoming-meetings-list", upcoming, false);
   renderMeetingList("past-meetings-list", past.slice(0, 20), true);
+}
+
+function renderGoogleMeetStatus() {
+  const status = state.googleMeetStatus;
+  const panel = $("#google-meet-status");
+  const title = $("#google-meet-status-title");
+  const detail = $("#google-meet-status-detail");
+  const connect = $("#connect-google-meet");
+  const disconnect = $("#disconnect-google-meet");
+  panel.classList.toggle("connected", Boolean(status.connected));
+  panel.classList.toggle("warning", !status.connected);
+  if (status.connected) {
+    title.textContent = "Google Meet connected";
+    detail.textContent = `${status.email || "Company Google account"} creates the meeting links.`;
+  } else if (!status.configured) {
+    title.textContent = "Google Meet server setup required";
+    detail.textContent = status.error || (status.missing?.length ? `Missing Hostinger variables: ${status.missing.join(", ")}` : "Run the Google Meet SQL and configure Hostinger.");
+  } else {
+    title.textContent = "Connect a Google account";
+    detail.textContent = "An administrator must approve Google Meet access once.";
+  }
+  connect.hidden = currentProfile?.role !== "admin" || status.connected || !status.configured;
+  disconnect.hidden = currentProfile?.role !== "admin" || !status.connected;
+  $("#start-context-meeting").textContent = status.connected ? "Start Google Meet" : "Start now";
 }
 
 function renderMeetingList(containerId, meetings, past) {
@@ -2749,6 +3026,8 @@ async function hydrateAttachment(holder, attachment, message) {
       audio.src = url;
       audio.controls = true;
       audio.preload = "metadata";
+      audio.muted = false;
+      audio.volume = 1;
       const label = document.createElement("span");
       label.textContent = `${attachment.name || "Voice message"} - ${formatBytes(attachment.size)}`;
       wrap.append(audio, label);
@@ -2841,6 +3120,48 @@ function currentConversationKey() {
   return "";
 }
 
+async function loadMicrophoneDevices(requestPermission = false, preferredDeviceId = "") {
+  const select = $("#voice-microphone-select");
+  const refresh = $("#refresh-microphones");
+  if (!select || !navigator.mediaDevices?.enumerateDevices) return;
+  if ((state.voiceRecording || state.voiceCapturePending) && requestPermission) {
+    showToast("Stop the current recording before changing microphones.", "error");
+    return;
+  }
+
+  let permissionStream = null;
+  if (refresh) refresh.disabled = true;
+  try {
+    if (requestPermission) {
+      permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    }
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audioinput");
+    const selectedId = preferredDeviceId || select.value || localStorage.getItem(MICROPHONE_STORAGE_KEY) || "";
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Default microphone";
+    select.replaceChildren(defaultOption);
+    devices.forEach((device, index) => {
+      const option = document.createElement("option");
+      option.value = device.deviceId;
+      option.textContent = device.label || `Microphone ${index + 1}`;
+      select.append(option);
+    });
+    select.value = [...select.options].some((option) => option.value === selectedId) ? selectedId : "";
+    if (selectedId && !select.value) localStorage.removeItem(MICROPHONE_STORAGE_KEY);
+    if (requestPermission) showToast(devices.length ? "Microphone list refreshed." : "No microphone was found.", devices.length ? "success" : "error");
+  } catch (error) {
+    const denied = error?.name === "NotAllowedError" || error?.name === "SecurityError";
+    if (requestPermission) showToast(denied
+      ? "Microphone access was blocked. Allow it in your browser's site settings, then refresh the list."
+      : "Vine Connect could not read your microphone list.", "error");
+  } finally {
+    permissionStream?.getTracks().forEach((track) => track.stop());
+    if (refresh) refresh.disabled = false;
+    updateSendState();
+  }
+}
+
 function preferredVoiceMimeType() {
   if (!window.MediaRecorder?.isTypeSupported) return "";
   return ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
@@ -2873,7 +3194,57 @@ function updateVoiceRecordingUi() {
     $("#voice-recording-time").textContent = formatVoiceElapsed(elapsed);
   } else {
     $("#voice-recording-time").textContent = "0:00";
+    const meter = $("#voice-input-meter i");
+    if (meter) meter.style.width = "3%";
   }
+}
+
+function startVoiceInputMeter(recording) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  try {
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(recording.stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.72;
+    source.connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    recording.audioContext = context;
+    recording.audioSource = source;
+    recording.analyser = analyser;
+    recording.peakLevel = 0;
+    recording.analysedFrames = 0;
+
+    const draw = () => {
+      if (state.voiceRecording !== recording || recording.recorder.state === "inactive") return;
+      analyser.getByteTimeDomainData(samples);
+      let sumSquares = 0;
+      for (const sample of samples) {
+        const normalized = (sample - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / samples.length);
+      recording.peakLevel = Math.max(recording.peakLevel, rms);
+      recording.analysedFrames += 1;
+      const percent = Math.max(3, Math.min(100, Math.round(rms * 460)));
+      const meter = $("#voice-input-meter i");
+      if (meter) meter.style.width = `${percent}%`;
+      recording.meterFrame = window.requestAnimationFrame(draw);
+    };
+    context.resume().catch(() => {});
+    draw();
+  } catch (_error) {
+    // Recording still works when a browser does not expose live audio analysis.
+  }
+}
+
+function stopVoiceInputMeter(recording) {
+  if (recording?.meterFrame) window.cancelAnimationFrame(recording.meterFrame);
+  try { recording?.audioSource?.disconnect(); } catch (_error) { /* Already disconnected. */ }
+  recording?.audioContext?.close?.().catch?.(() => {});
+  const meter = $("#voice-input-meter i");
+  if (meter) meter.style.width = "3%";
 }
 
 async function startVoiceRecording() {
@@ -2890,10 +3261,29 @@ async function startVoiceRecording() {
   let capturedStream = null;
   let recording = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
-    });
+    const microphoneSelect = $("#voice-microphone-select");
+    const selectedDeviceId = microphoneSelect?.value || "";
+    const audioConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: { ideal: 1 },
+      ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
+    };
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+    } catch (deviceError) {
+      const unavailable = selectedDeviceId && ["NotFoundError", "OverconstrainedError"].includes(deviceError?.name);
+      if (!unavailable) throw deviceError;
+      localStorage.removeItem(MICROPHONE_STORAGE_KEY);
+      if (microphoneSelect) microphoneSelect.value = "";
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: { ideal: 1 } },
+        video: false,
+      });
+      showToast("The selected microphone is unavailable. Vine Connect switched to your default microphone.");
+    }
     capturedStream = stream;
     if (captureToken !== state.voiceCaptureToken || conversationKey !== currentConversationKey() || !currentSession) {
       stream.getTracks().forEach((track) => track.stop());
@@ -2923,6 +3313,7 @@ async function startVoiceRecording() {
     });
     recorder.addEventListener("stop", async () => {
       if (recording.timer) window.clearInterval(recording.timer);
+      stopVoiceInputMeter(recording);
       recording.stream.getTracks().forEach((track) => track.stop());
       if (state.voiceRecording === recording) state.voiceRecording = null;
       updateVoiceRecordingUi();
@@ -2937,10 +3328,15 @@ async function startVoiceRecording() {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const file = new File([blob], `voice-message-${stamp}.${voiceFileExtension(type)}`, { type, lastModified: Date.now() });
       await queueFiles([file]);
-      showToast("Voice message ready. Press Send to share it.", "success");
+      const noInputDetected = recording.analysedFrames > 12 && recording.peakLevel < 0.008;
+      showToast(noInputDetected
+        ? "Very little microphone sound was detected. Play the preview before sending or choose another microphone."
+        : "Voice message ready. Play the preview, then press Send to share it.", noInputDetected ? "error" : "success");
     });
     recorder.start(250);
     capturedStream = null;
+    startVoiceInputMeter(recording);
+    loadMicrophoneDevices(false, selectedDeviceId);
     recording.timer = window.setInterval(() => {
       updateVoiceRecordingUi();
       if ((Date.now() - recording.startedAt) / 1000 >= MAX_VOICE_SECONDS) {
@@ -2953,6 +3349,7 @@ async function startVoiceRecording() {
     capturedStream?.getTracks().forEach((track) => track.stop());
     if (recording) {
       if (recording.timer) window.clearInterval(recording.timer);
+      stopVoiceInputMeter(recording);
       recording.stream.getTracks().forEach((track) => track.stop());
       if (state.voiceRecording === recording) state.voiceRecording = null;
       updateVoiceRecordingUi();
@@ -2997,7 +3394,7 @@ async function queueFiles(fileList) {
     }
     const id = makeId();
     state.pendingFiles.push({ id, file });
-    if (file.type.startsWith("image/")) state.pendingPreviews.set(id, URL.createObjectURL(file));
+    if (file.type.startsWith("image/") || file.type.startsWith("audio/")) state.pendingPreviews.set(id, URL.createObjectURL(file));
   }
   $("#file-input").value = "";
   renderPendingFiles();
@@ -3046,7 +3443,7 @@ function renderPendingFiles() {
     const item = document.createElement("div");
     item.className = "pending-file";
     const previewUrl = state.pendingPreviews.get(id);
-    if (previewUrl) {
+    if (previewUrl && file.type.startsWith("image/")) {
       const img = document.createElement("img");
       img.src = previewUrl;
       img.alt = "";
@@ -3069,6 +3466,17 @@ function renderPendingFiles() {
     remove.textContent = "x";
     remove.addEventListener("click", () => removePendingFile(id));
     item.append(copy, remove);
+    if (previewUrl && file.type.startsWith("audio/")) {
+      item.classList.add("pending-audio");
+      const audio = document.createElement("audio");
+      audio.src = previewUrl;
+      audio.controls = true;
+      audio.preload = "metadata";
+      audio.muted = false;
+      audio.volume = 1;
+      audio.setAttribute("aria-label", `Preview ${file.name}`);
+      item.append(audio);
+    }
     container.append(item);
   });
   updateSendState();
@@ -4516,6 +4924,10 @@ function updateSendState() {
     recordButton.disabled = !hasConversation || $("#message-input")?.disabled || state.busy || voiceBusy;
     recordButton.title = state.voiceCapturePending ? "Waiting for microphone permission" : state.voiceRecording ? "Voice message is recording" : "Record a voice message";
   }
+  const microphoneSelect = $("#voice-microphone-select");
+  if (microphoneSelect) microphoneSelect.disabled = !hasConversation || $("#message-input")?.disabled || state.busy || voiceBusy;
+  const refreshMicrophones = $("#refresh-microphones");
+  if (refreshMicrophones) refreshMicrophones.disabled = state.busy || voiceBusy;
   updateVoiceRecordingUi();
 }
 

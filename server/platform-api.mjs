@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { rateLimit } from "express-rate-limit";
 import webpush from "web-push";
+import { registerGoogleMeetApi } from "./google-meet-api.mjs";
 
 const MAX_FILE_BYTES = 30 * 1024 * 1024;
 const ALLOWED_MEMBER_ROLES = new Set(["employee", "admin"]);
@@ -162,6 +163,8 @@ export function registerPlatformApi({ app, supabase, authenticate }) {
     }, recipients.preferenceKey);
     return data;
   }
+
+  registerGoogleMeetApi({ app, supabase, authenticate, requireAdmin, handler, postMessage, audit });
 
   app.post("/api/session/heartbeat", authenticate, handler(async (request, response) => {
     const now = new Date().toISOString();
