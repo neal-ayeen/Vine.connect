@@ -2481,12 +2481,25 @@ function renderSeenStatus(text, unavailable = false) {
 }
 
 function appendFormattedText(container, text) {
-  const pattern = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|@[a-zA-Z0-9._-]+)/g;
+  const value = String(text || "");
+  const pattern = /(https?:\/\/[^\s<>]+|\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|@[a-zA-Z0-9._-]+)/gi;
   let cursor = 0;
-  for (const match of String(text || "").matchAll(pattern)) {
-    if (match.index > cursor) container.append(document.createTextNode(text.slice(cursor, match.index)));
+  for (const match of value.matchAll(pattern)) {
+    if (match.index > cursor) container.append(document.createTextNode(value.slice(cursor, match.index)));
     const token = match[0];
-    if (token.startsWith("**")) {
+    if (/^https?:\/\//i.test(token)) {
+      const linkValue = token.replace(/[.,!?;:]+$/, "");
+      const trailing = token.slice(linkValue.length);
+      const link = document.createElement("a");
+      link.className = "message-link";
+      link.href = linkValue;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = linkValue;
+      link.title = "Open link in a new tab";
+      container.append(link);
+      if (trailing) container.append(document.createTextNode(trailing));
+    } else if (token.startsWith("**")) {
       const strong = document.createElement("strong");
       strong.textContent = token.slice(2, -2);
       container.append(strong);
@@ -2502,7 +2515,7 @@ function appendFormattedText(container, text) {
     }
     cursor = match.index + token.length;
   }
-  if (cursor < text.length) container.append(document.createTextNode(text.slice(cursor)));
+  if (cursor < value.length) container.append(document.createTextNode(value.slice(cursor)));
 }
 
 function applyTextFormat(inputId, marker, placeholder) {

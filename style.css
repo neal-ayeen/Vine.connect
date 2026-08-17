@@ -544,6 +544,11 @@ body[data-theme="dark"] .modal textarea { border-color: #354d41; color: #edf5f0;
 .mention-token { display: inline; padding: 1px 3px; border-radius: 4px; color: #165d3d; background: #dcefe4; font-weight: 720; }
 .message-content > p strong, .compact-message p strong, .activity-card p strong { font-weight: 820; }
 .message-content > p em, .compact-message p em, .activity-card p em { font-style: italic; }
+.message-link { color: #087b52; font-weight: 720; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.message-link:hover { color: #065c3e; }
+.message-link:focus-visible { border-radius: 3px; outline: 2px solid #2ca674; outline-offset: 2px; }
+body[data-theme="dark"] .message-link { color: #64d9a5; }
+body[data-theme="dark"] .message-link:hover { color: #93ecc5; }
 
 .thread-modal { width: min(680px, 100%); height: min(780px, 90vh); display: grid; grid-template-rows: auto auto minmax(120px,1fr) auto; gap: 12px; overflow: hidden; }
 .thread-heading { padding-right: 42px; }
